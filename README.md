@@ -1,0 +1,165 @@
+# siftr
+
+Find media by example.
+
+Off-the-shelf taggers know about "dog", "beach" and "car". They do not know about
+the specific things in *your* library — a particular type of ceramic glaze, your
+grandmother's handwriting, one model of vintage amplifier, your friends' faces.
+siftr lets you teach it those: drop a handful of examples in a folder, and it
+finds everything else in your library that matches.
+
+It works on images and videos, runs entirely on your own machine, and never
+moves your originals unless you tell it to.
+
+## How it works
+
+siftr embeds every file in your library into a CLIP vector space once, then
+answers queries against those stored vectors:
+
+- **Teaching a concept** averages your examples' embeddings into a *prototype*,
+  and a file matches when its cosine similarity to that prototype clears a
+  threshold. With a handful of examples and no negatives, a prototype beats
+  anything with more parameters — there is not enough data to fit them.
+- **People** use a separate face pipeline (RetinaFace detection, ArcFace
+  embeddings). Every reference photo you give is kept rather than averaged, and
+  matching takes the best similarity across them, so one person can look
+  different at different ages and angles.
+- **Videos** are sampled — a handful of frames spread through the clip rather
+  than every frame. A concept only has to appear somewhere in a video for the
+  file to match, and full-decode embedding costs orders of magnitude more for
+  almost no extra recall.
+
+## Install
+
+```bash
+pip install -e .
+```
+
+Face recognition and faster video decoding are optional extras:
+
+```bash
+pip install -e '.[faces,video]'
+```
+
+Without `video`, siftr shells out to `ffmpeg` for video frames. Without `faces`,
+everything works except people.
+
+## Use
+
+Index a library. This is the slow part; re-runs skip unchanged files.
+
+```bash
+siftr index ~/Pictures
+```
+
+Teach a concept from a folder of examples:
+
+```bash
+siftr teach ceramic-glaze ~/examples/glaze --negatives ~/examples/not-glaze
+```
+
+`--negatives` is optional but worth supplying. With counter-examples siftr fits
+the threshold to what actually separates your concept from the rest of your
+library; without them it falls back to a conservative default.
+
+Search:
+
+```bash
+siftr search --concept ceramic-glaze --scores
+```
+
+Or skip teaching entirely and search straight from a folder of examples:
+
+```bash
+siftr search --examples ~/examples/glaze -n 40
+```
+
+Or search by text, with no examples at all:
+
+```bash
+siftr search --text "a hand-thrown bowl with a crackled finish"
+```
+
+Collect results into a folder. The default is symlinks, so your originals stay
+where they are:
+
+```bash
+siftr search --concept ceramic-glaze --output ~/sorted/glaze
+siftr search --concept ceramic-glaze --output ~/sorted/glaze --mode copy
+```
+
+### People
+
+Register someone from a folder of photos of them:
+
+```bash
+siftr add-person "Nadia" ~/refs/nadia --rematch
+```
+
+siftr uses the largest face in each reference photo, so group shots where they
+are in front still work. `--rematch` re-checks faces siftr has already found in
+your library, so you do not need to re-index after adding someone.
+
+```bash
+siftr search --person "Nadia"
+```
+
+### Everything else
+
+```bash
+siftr status              # index statistics
+siftr concepts            # what you have taught
+siftr people              # who is registered
+siftr apply <concept>     # store tags for a concept across the index
+siftr rematch             # re-check unidentified faces against all people
+siftr forget concept <name>
+siftr forget person <name>
+```
+
+## Tuning
+
+`siftr teach` reports a **cohesion** score — how similar your examples are to
+each other. Below about 0.70 the concept is vague, and the fix is almost always
+to *narrow* the example folder rather than add to it. Ten tightly-related
+examples beat fifty loose ones.
+
+If a concept is too loose or too strict, override its threshold per search
+rather than re-teaching:
+
+```bash
+siftr search --concept ceramic-glaze --threshold 0.62
+```
+
+Note that text and example searches are not on the same scale — CLIP text
+similarities run much lower than image-image ones — so a threshold tuned for
+`--examples` will reject everything under `--text`.
+
+## Where things live
+
+The index is a single SQLite file at `~/.siftr/index.db` (override with
+`--db`, or `SIFTR_HOME`). Nothing about your library is uploaded anywhere; the
+only network access is the one-time model download.
+
+| Module | Role |
+|---|---|
+| `cli.py` | argparse CLI; imports torch lazily so metadata commands stay fast |
+| `db.py` | SQLite schema and queries; embeddings as float32 BLOBs |
+| `embed.py` | CLIP image and text embeddings via open_clip |
+| `concepts.py` | few-shot prototype learning and threshold selection |
+| `faces.py` | InsightFace detection/recognition and person matching |
+| `media.py` | file discovery, EXIF-correct loading, video frame sampling |
+| `index.py` | the indexing pass, concept application, face re-matching |
+| `search.py` | ranking the index by concept, examples, text, or person |
+| `organize.py` | materializing results as symlinks, copies, or moves |
+| `vectors.py` | normalization, serialization, cosine, centroid |
+
+## Tests
+
+```bash
+pytest
+```
+
+The suite is hermetic — it never downloads CLIP or InsightFace. A deterministic
+fake embedder and a stub face analyzer stand in, because the logic worth testing
+(storage, thresholds, reductions, placement) does not depend on which model
+produced the vectors.

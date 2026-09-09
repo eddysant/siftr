@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "siftr"
+version = "0.1.0"
+description = "Find media by example. Teach it a concept with a folder of pictures, then search your whole library for more."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+
+dependencies = [
+    "numpy>=1.24",
+    "Pillow>=10.0",
+    "open_clip_torch>=2.24",
+    "torch>=2.1",
+]
+
+[project.optional-dependencies]
+faces = ["insightface>=0.7.3", "onnxruntime>=1.17"]
+video = ["av>=12.0"]
+dev = ["pytest>=8.0", "ruff>=0.4"]
+
+[project.scripts]
+siftr = "siftr.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["siftr*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+# Pinned explicitly so CI and local runs agree regardless of the ruff default
+# rule set on a given machine.
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "RUF"]
+
+# siftr deliberately catches broadly around third-party decoders: PIL, ffmpeg,
+# ONNX and CLIP raise a wide and unstable range of exception types, and a single
+# unreadable file must never abort a long scan. Failures are recorded in
+# IndexStats.errors rather than swallowed silently, so BLE001/S112 are not
+# selected above.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,25 @@
+# Local media library data — never commit
+data/
+test_images/
+*.db
+*.sqlite3
+.siftr/
+
+# Model caches
+models/
+*.onnx
+*.pt
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+
+# OS
+.DS_Store
