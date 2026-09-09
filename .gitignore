@@ -1,7 +1,7 @@
-# Local media library data — never commit
-data/
-test_images/
+# Local index and any media kept in the working tree — never commit
 *.db
+*.db-wal
+*.db-shm
 *.sqlite3
 .siftr/
 
