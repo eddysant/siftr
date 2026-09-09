@@ -20,11 +20,14 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
       - name: Install test dependencies
-        # Deliberately not the full extras: the suite is hermetic and needs
-        # neither torch nor onnxruntime, so CI stays fast and offline.
+        # --no-deps deliberately skips torch/open_clip/onnxruntime: the suite is
+        # hermetic (fake embedder, stub face analyzer), so CI stays fast and
+        # needs no model downloads. The package itself must still be installed
+        # or `import siftr` fails in conftest.
         run: |
           python -m pip install --upgrade pip
           pip install numpy Pillow pytest ruff
+          pip install --no-deps -e .
       - name: Lint
         run: ruff check siftr tests
       - name: Format check
