@@ -23,7 +23,7 @@ import numpy as np
 
 from .vectors import from_blob, to_blob
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -37,6 +37,10 @@ CREATE TABLE IF NOT EXISTS files (
     kind      TEXT NOT NULL,              -- 'image' | 'video'
     size      INTEGER NOT NULL,
     mtime_ns  INTEGER NOT NULL,
+    -- Frames sampled when this file was indexed. Raising --video-samples must
+    -- re-index videos that were embedded at the old, lower rate; without this
+    -- they looked "unchanged" and silently kept their coarser coverage.
+    samples   INTEGER NOT NULL DEFAULT 1,
     indexed_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -158,7 +162,7 @@ class Database:
 
     # ------------------------------------------------------------------ files
 
-    def upsert_file(self, path: Path, kind: str, size: int, mtime_ns: int) -> int:
+    def upsert_file(self, path: Path, kind: str, size: int, mtime_ns: int, samples: int = 1) -> int:
         """Record a file and return its id, replacing any prior embeddings.
 
         Re-indexing a changed file must not leave its old vectors behind, so the
@@ -166,16 +170,17 @@ class Database:
         """
         cur = self.conn.execute(
             """
-            INSERT INTO files (path, kind, size, mtime_ns)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO files (path, kind, size, mtime_ns, samples)
+            VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(path) DO UPDATE SET
                 kind = excluded.kind,
                 size = excluded.size,
                 mtime_ns = excluded.mtime_ns,
+                samples = excluded.samples,
                 indexed_at = datetime('now')
             RETURNING id
             """,
-            (str(path), kind, size, mtime_ns),
+            (str(path), kind, size, mtime_ns, samples),
         )
         file_id = int(cur.fetchone()[0])
         self.conn.execute("DELETE FROM embeddings WHERE file_id = ?", (file_id,))
@@ -185,15 +190,21 @@ class Database:
         self.conn.execute("DELETE FROM file_concepts WHERE file_id = ?", (file_id,))
         return file_id
 
-    def is_unchanged(self, path: Path, size: int, mtime_ns: int) -> bool:
-        """True if this exact file is already indexed and has embeddings."""
+    def is_unchanged(self, path: Path, size: int, mtime_ns: int, samples: int = 1) -> bool:
+        """True if this exact file is already indexed at this sample rate.
+
+        The sample check is what makes raising --video-samples take effect
+        without --force: a video embedded from 4 frames is not "unchanged" when
+        8 are now wanted. Files indexed at a *higher* rate are left alone, so
+        lowering the setting does not throw away work.
+        """
         row = self.conn.execute(
             """
             SELECT 1 FROM files f
-            WHERE f.path = ? AND f.size = ? AND f.mtime_ns = ?
+            WHERE f.path = ? AND f.size = ? AND f.mtime_ns = ? AND f.samples >= ?
               AND EXISTS (SELECT 1 FROM embeddings e WHERE e.file_id = f.id)
             """,
-            (str(path), size, mtime_ns),
+            (str(path), size, mtime_ns, samples),
         ).fetchone()
         return row is not None
 
@@ -349,6 +360,35 @@ class Database:
             return [], np.empty((0, 0), dtype=np.float32)
         owners = [(int(r["person_id"]), r["name"]) for r in rows]
         return owners, np.vstack([from_blob(r["vector"]) for r in rows])
+
+    def person_reference_vectors(self, person_id: int) -> np.ndarray:
+        rows = self.conn.execute(
+            "SELECT vector FROM person_faces WHERE person_id = ?", (person_id,)
+        ).fetchall()
+        if not rows:
+            return np.empty((0, 0), dtype=np.float32)
+        return np.vstack([from_blob(r["vector"]) for r in rows])
+
+    def person_reference_sources(self, person_id: int) -> list[str]:
+        return [
+            r["source"] or ""
+            for r in self.conn.execute(
+                "SELECT source FROM person_faces WHERE person_id = ?", (person_id,)
+            )
+        ]
+
+    def face_vectors(self, face_ids: Sequence[int]) -> np.ndarray:
+        """Embeddings for specific detected faces, used when naming a cluster."""
+        if not face_ids:
+            return np.empty((0, 0), dtype=np.float32)
+        placeholders = ",".join("?" * len(face_ids))
+        rows = self.conn.execute(
+            f"SELECT vector FROM file_faces WHERE id IN ({placeholders})",
+            [int(f) for f in face_ids],
+        ).fetchall()
+        if not rows:
+            return np.empty((0, 0), dtype=np.float32)
+        return np.vstack([from_blob(r["vector"]) for r in rows])
 
     def list_people(self) -> list[sqlite3.Row]:
         return self.conn.execute(

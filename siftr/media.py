@@ -15,6 +15,17 @@ from pathlib import Path
 
 from PIL import Image, ImageOps
 
+# Register the HEIF/HEIC opener if it is available. Pillow ships no HEIC support
+# of its own (HEVC is patent-encumbered), and a Mac photo library is mostly HEIC,
+# so without this every iPhone photo fails to decode and is skipped at index time.
+try:
+    from pillow_heif import register_heif_opener
+
+    register_heif_opener()
+    HEIC_SUPPORTED = True
+except ImportError:  # pragma: no cover - optional dependency
+    HEIC_SUPPORTED = False
+
 IMAGE_EXTENSIONS = {
     ".jpg",
     ".jpeg",
@@ -117,6 +128,22 @@ def load_image(path: Path) -> Image.Image:
     image = Image.open(path)
     image = ImageOps.exif_transpose(image)
     return image.convert("RGB")
+
+
+def poster_frame(path: Path, kind: str) -> Image.Image:
+    """One representative still for a file, for thumbnails.
+
+    Videos need a decoded frame; PIL cannot open a container. Sampling a single
+    frame from a little way in avoids the black or fading first frame that many
+    clips open on.
+    """
+    if kind == "image":
+        return load_image(path)
+
+    sampled = sample_video(path, samples=1)
+    if not sampled:
+        raise ValueError(f"no decodable frames in {path.name}")
+    return sampled[0].image
 
 
 def frames(path: Path, kind: str, samples: int = 8) -> list[Frame]:

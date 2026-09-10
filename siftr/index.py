@@ -68,7 +68,9 @@ def build_index(
     for media in discover(root):
         stats.scanned += 1
 
-        if not force and db.is_unchanged(media.path, media.size, media.mtime_ns):
+        # Images are always one frame; only videos care about the sample rate.
+        wanted_samples = video_samples if media.kind == "video" else 1
+        if not force and db.is_unchanged(media.path, media.size, media.mtime_ns, wanted_samples):
             stats.skipped_unchanged += 1
             continue
 
@@ -93,7 +95,7 @@ def build_index(
             stats.errors.append(f"{media.path}: embedding failed: {exc}")
             continue
 
-        file_id = db.upsert_file(media.path, media.kind, media.size, media.mtime_ns)
+        file_id = db.upsert_file(media.path, media.kind, media.size, media.mtime_ns, len(extracted))
         db.add_embeddings(file_id, vectors, [f.time for f in extracted])
         stats.indexed += 1
         stats.frames_embedded += len(extracted)

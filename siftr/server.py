@@ -25,6 +25,7 @@ from typing import Any
 
 from .config import default_db_path
 from .db import Database
+from .faces import FaceRecognitionUnavailable
 from .jobs import JobRunner
 
 
@@ -83,6 +84,19 @@ try:
         name: str
         paths: list[str]
         replace: bool = False
+        # Explicit counter-examples. Calibration against the library makes
+        # positives-only workable, but real negatives place the threshold more
+        # accurately when the user can supply them.
+        negatives: list[str] = []
+
+    class PersonBody(BaseModel):
+        name: str
+        paths: list[str]
+        all_faces: bool = False
+
+    class NameClusterBody(BaseModel):
+        name: str
+        face_ids: list[int]
 
     class OverrideBody(BaseModel):
         path: str
@@ -207,8 +221,9 @@ def create_app(db_path: Path | None = None, token: str | None = None):
                 # Dropping onto an existing tag adds to it rather than
                 # redefining it, and pinned corrections count as examples too.
                 paths = list(dict.fromkeys([*paths, *map(Path, example_paths_for(db, body.name))]))
+            negatives = [app.state.allowlist.assert_permits(Path(p)) for p in body.negatives]
             try:
-                result = teach_from_paths(db, body.name, paths, embedder())
+                result = teach_from_paths(db, body.name, paths, embedder(), negatives=negatives)
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
             return {
@@ -342,6 +357,112 @@ def create_app(db_path: Path | None = None, token: str | None = None):
         with open_db() as db:
             return undo_renames(db, Path(roots[0]))
 
+    # ----------------------------------------------------------------- people
+
+    @app.get("/api/people", dependencies=guard)
+    def people() -> dict:
+        with open_db() as db:
+            return {
+                "people": [
+                    {
+                        "name": row["name"],
+                        "references": int(row["n_examples"]),
+                        "files": int(row["n_files"]),
+                    }
+                    for row in db.list_people()
+                ]
+            }
+
+    @app.post("/api/people", dependencies=guard)
+    def add_person(body: PersonBody) -> dict:
+        """Register someone from dropped photos of them."""
+        from .service import register_person_from_paths
+
+        paths = [app.state.allowlist.assert_permits(Path(p)) for p in body.paths]
+        with open_db() as db:
+            try:
+                result = register_person_from_paths(db, body.name, paths, body.all_faces)
+            except FaceRecognitionUnavailable as exc:
+                raise HTTPException(status_code=501, detail=str(exc)) from exc
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            return {
+                "name": result.name,
+                "references": result.n_references,
+                "skipped": result.skipped,
+            }
+
+    @app.delete("/api/people/{name}", dependencies=guard)
+    def forget_person(name: str) -> dict:
+        with open_db() as db:
+            if not db.delete_person(name):
+                raise HTTPException(status_code=404, detail=f"no such person: {name}")
+            return {"deleted": name}
+
+    @app.get("/api/people/{name}/files", dependencies=guard)
+    def person_files(name: str, limit: int = Query(default=500)) -> dict:
+        from .search import by_person
+
+        with open_db() as db:
+            hits = by_person(db, name, limit)
+            return {
+                "person": name,
+                "files": [
+                    {
+                        "path": str(hit.path),
+                        "name": hit.path.name,
+                        "kind": hit.kind,
+                        "score": hit.score,
+                    }
+                    for hit in hits
+                ],
+            }
+
+    @app.post("/api/people/rematch", dependencies=guard)
+    def rematch() -> dict:
+        from .index import rematch_faces
+
+        with open_db() as db:
+            return {"identified": rematch_faces(db)}
+
+    @app.get("/api/faces/clusters", dependencies=guard)
+    def clusters(threshold: float = Query(default=0.5), min_size: int = Query(default=3)) -> dict:
+        """Unidentified faces grouped into probable people, largest first."""
+        from .service import cluster_unnamed_faces
+
+        with open_db() as db:
+            found = cluster_unnamed_faces(db, threshold=threshold, min_size=min_size)
+            for cluster in found:
+                cluster["sample_path"] = db.path_for(cluster["sample_file_id"])
+            return {"clusters": found}
+
+    @app.post("/api/faces/clusters/name", dependencies=guard)
+    def name_a_cluster(body: NameClusterBody) -> dict:
+        from .service import name_cluster
+
+        with open_db() as db:
+            try:
+                result = name_cluster(db, body.face_ids, body.name)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            return {"name": result.name, "references": result.n_references}
+
+    # -------------------------------------------------------------- filenames
+
+    @app.get("/api/renames/pending", dependencies=guard)
+    def pending_renames() -> dict:
+        """How many filenames no longer match the tags their file carries.
+
+        Undoing a rename batch restores names without reverting the tag changes
+        that produced them, so the two can legitimately disagree. Reporting the
+        count lets the UI say so instead of leaving it silent.
+        """
+        from .service import apply_tags_to_filenames
+
+        with open_db() as db:
+            preview = apply_tags_to_filenames(db, root=None, dry_run=True)
+            return {"pending": preview["renamed"], "changes": preview["changes"][:50]}
+
     @app.get("/api/jobs/{job_id}", dependencies=guard)
     def job_status(job_id: str) -> dict:
         job = app.state.jobs.get(job_id)
@@ -366,15 +487,19 @@ def create_app(db_path: Path | None = None, token: str | None = None):
         """
         from PIL import Image
 
-        from .media import load_image
+        from .media import classify, poster_frame
 
         try:
             resolved = app.state.allowlist.assert_permits(Path(path))
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
 
+        # Videos need a decoded frame — PIL cannot open a container, so calling
+        # load_image on an .mp4 used to 415 and every video in the grid showed a
+        # broken image.
+        kind = classify(resolved) or "image"
         try:
-            image = load_image(resolved)
+            image = poster_frame(resolved, kind)
         except Exception as exc:
             raise HTTPException(status_code=415, detail=f"cannot decode: {exc}") from exc
 

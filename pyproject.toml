@@ -15,6 +15,9 @@ dependencies = [
     "Pillow>=10.0",
     "open_clip_torch>=2.24",
     "torch>=2.1",
+    # Pillow ships no HEIC support (HEVC is patent-encumbered) and a Mac photo
+    # library is largely HEIC, so this is a hard dependency rather than an extra.
+    "pillow-heif>=0.16",
 ]
 
 [project.optional-dependencies]
