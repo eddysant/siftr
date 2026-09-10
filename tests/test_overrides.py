@@ -129,6 +129,7 @@ def test_all_mode_with_one_tag_matches_that_tag(two_tags, tmp_path):
 def test_duplicate_tag_names_do_not_break_all_mode(two_tags):
     """count(DISTINCT) vs len(names) would disagree without the set()."""
     db, ids = two_tags
+    assert len(ids) == 3
     rows = db.files_matching_tags(["glaze", "glaze"], mode="all")
     assert {r["id"] for r in rows} == {ids[0], ids[1]}
 
@@ -144,7 +145,7 @@ def test_empty_tag_list_returns_nothing(two_tags):
 
 
 def test_results_carry_every_matched_tag(two_tags, tmp_path):
-    db, ids = two_tags
+    db, _ids = two_tags
     rows = db.files_matching_tags(["glaze", "outdoor"], mode="all")
     assert sorted(rows[0]["tags"].split(",")) == ["glaze", "outdoor"]
 

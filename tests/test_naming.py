@@ -105,9 +105,7 @@ def test_retag_replaces_rather_than_appends():
 
 
 def test_retag_preserves_foreign_brackets_while_changing_its_own():
-    assert (
-        retag_name("IMG_1 [2] [glaze].jpg", ["outdoor"], KNOWN) == "IMG_1 [2] [outdoor].jpg"
-    )
+    assert retag_name("IMG_1 [2] [glaze].jpg", ["outdoor"], KNOWN) == "IMG_1 [2] [outdoor].jpg"
 
 
 def test_retag_only_keeps_the_final_extension():

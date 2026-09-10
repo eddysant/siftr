@@ -4,14 +4,12 @@ The real embedder is replaced with the deterministic fake, so these run without
 downloading CLIP.
 """
 
-from pathlib import Path
-
 import pytest
 
 pytest.importorskip("fastapi")
-from fastapi.testclient import TestClient  # noqa: E402
+from fastapi.testclient import TestClient
 
-from siftr.server import Allowlist, create_app  # noqa: E402
+from siftr.server import Allowlist, create_app
 
 TOKEN = "test-token"
 
