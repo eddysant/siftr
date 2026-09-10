@@ -1,0 +1,23 @@
+{
+  appId: "dev.eddysant.siftr",
+  productName: "siftr",
+  directories: { output: "release/${version}" },
+  files: ["dist/**/*", "dist-electron/**/*"],
+  /**
+   * A vendored Python interpreter is picked up from resources/python when one is
+   * present (see scripts/vendor-python.sh). It is not built by default: torch
+   * alone is ~590 MB, so bundling turns a ~200 MB app into ~1.5 GB. Without it
+   * the app finds `siftr` on PATH from a normal pip install.
+   */
+  extraResources: [
+    { from: "resources/python", to: "python", filter: ["**/*"] }
+  ],
+  mac: {
+    category: "public.app-category.photography",
+    target: [{ target: "dmg", arch: ["arm64"] }],
+    // Unsigned: this is a personal build. Gatekeeper will need a right-click →
+    // Open the first time.
+    identity: null
+  },
+  dmg: { title: "siftr ${version}" }
+}

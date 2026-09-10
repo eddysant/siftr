@@ -8,6 +8,20 @@ export interface MediaFile {
     people: string[];
 }
 
+export interface Person {
+    name: string;
+    references: number;
+    files: number;
+}
+
+export interface FaceCluster {
+    size: number;
+    files: number;
+    face_ids: number[];
+    sample_file_id: number;
+    sample_path: string | null;
+}
+
 export interface Tag {
     name: string;
     threshold: number;

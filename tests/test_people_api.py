@@ -279,3 +279,41 @@ def test_raising_video_samples_invalidates_the_index(db, tmp_path):
     assert db.is_unchanged(path, 100, 1, samples=4)
     assert not db.is_unchanged(path, 100, 1, samples=8), "must re-index at a higher rate"
     assert db.is_unchanged(path, 100, 1, samples=2), "lowering must not discard work"
+
+
+# ------------------------------------------------- counter-examples only
+
+
+def test_counter_examples_only_tightens_an_existing_tag(client, tmp_path, make_images):
+    """ALT-dropping onto a tag says 'not this' without restating what it is."""
+    make_images(tmp_path / "pos", (230, 20, 20), count=5, jitter=3)
+    make_images(tmp_path / "neg", (20, 20, 230), count=4, jitter=3)
+    positives = [str(p) for p in (tmp_path / "pos").glob("*.png")]
+    negatives = [str(p) for p in (tmp_path / "neg").glob("*.png")]
+
+    first = client.post("/api/tags", json={"name": "reds", "paths": positives}).json()
+
+    tightened = client.post("/api/tags", json={"name": "reds", "paths": [], "negatives": negatives})
+    assert tightened.status_code == 200, tightened.text
+    body = tightened.json()
+    assert body["examples"] == first["examples"], "the prototype's examples are unchanged"
+    assert body["threshold"] >= first["threshold"], "the cutoff may only tighten or hold"
+
+
+def test_counter_examples_for_an_unknown_tag_explain_themselves(client, tmp_path, make_images):
+    make_images(tmp_path / "neg", (20, 20, 230), count=3)
+    response = client.post(
+        "/api/tags",
+        json={
+            "name": "never-taught",
+            "paths": [],
+            "negatives": [str(p) for p in (tmp_path / "neg").glob("*.png")],
+        },
+    )
+    assert response.status_code == 400
+    assert "does not exist yet" in response.json()["detail"]
+
+
+def test_empty_teach_with_no_negatives_is_still_rejected(client):
+    response = client.post("/api/tags", json={"name": "x", "paths": []})
+    assert response.status_code == 400

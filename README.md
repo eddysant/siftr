@@ -145,18 +145,46 @@ pip install -e '.[ui,faces]'      # the API the UI talks to
 cd desktop && npm install && npm run dev
 ```
 
+To build a real macOS app:
+
+```bash
+cd desktop && npm run dist        # -> release/0.1.0/siftr-<version>-arm64.dmg
+```
+
+The build is unsigned, so Gatekeeper wants a right-click → Open the first time.
+It bundles the UI but **not** Python: torch alone is ~590 MB, which would turn a
+117 MB DMG into roughly 1.5 GB before a single model is downloaded. The app finds
+`siftr` on `PATH` instead. A packaged app does not inherit your shell `PATH`, so
+if siftr lives in a virtualenv, point at it directly:
+
+```bash
+SIFTR_BIN=/path/to/.venv/bin/siftr open -a siftr
+```
+
+If it cannot find the service, the app says so and tells you this, rather than
+failing silently.
+
 The app starts `siftr serve` itself and talks to it over a local HTTP API. That
 indirection exists because loading CLIP costs several seconds; a resident process
 pays it once instead of on every click.
 
 - **Drag photos onto a tag** to teach it. Dropping onto the target at the bottom
   of the rail makes a new tag. Photos can come from the grid or from Finder.
+- **Hold ⌥ while dropping** to teach a counter-example instead — "this is *not*
+  that". Counter-examples only tighten a tag; they never loosen it.
+- **Drop photos of someone** onto the People section to name them, and siftr
+  finds them everywhere else. Faces it has seen repeatedly but cannot name are
+  offered under **Unnamed faces** — click one to name the whole group at once.
+- **Select photos and use "add to tag"** to pin a tag on many at once.
 - **Click tags** in the rail to filter, and use **ANY / ALL** to switch between
   the union and the intersection of what you selected.
 - **Click a chip** on a photo to say the model got that one wrong. The correction
   survives re-scoring, and the photo becomes a training example for that tag.
 - **Filenames are updated automatically** as the library is scored. `Undo
-  renames` reverses the last batch.
+  renames` reverses the last batch; when filenames and tags disagree afterwards,
+  a banner says how many and offers to re-apply.
+- **Long jobs can be cancelled** from the progress bar; work already done is
+  kept.
 
 ### About the automatic renaming
 

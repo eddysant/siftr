@@ -13,7 +13,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .concepts import calibrate_threshold
+from .concepts import MIN_THRESHOLD, calibrate_threshold
 from .db import Database
 from .embed import Embedder
 from .jobs import Job
@@ -45,6 +45,37 @@ class TeachResult:
     cohesion: float
 
 
+def _retighten_with_negatives(
+    db: Database, name: str, negatives: Sequence[Path], embedder: Embedder
+) -> TeachResult:
+    """Move an existing tag's threshold above a set of counter-examples.
+
+    The prototype is left untouched: the examples still define what the tag looks
+    like. Only the cutoff moves, to just above the most tag-like of the things
+    the user has said are not it.
+    """
+    row = db.get_concept(name)
+    if row is None:
+        raise ValueError(
+            f"“{name}” does not exist yet — drop examples of it before counter-examples"
+        )
+
+    prototype = from_blob(row["prototype"])
+    _kept, negative_vectors = embedder.embed_paths([Path(p) for p in negatives])
+    if not len(negative_vectors):
+        raise ValueError("none of the counter-examples could be read as images")
+
+    negative_scores = cosine(prototype, negative_vectors)
+    # Counter-examples are a lower bound on the cutoff, never an upper one:
+    # saying "not this" can only tighten a tag. Taking the max with the existing
+    # threshold stops a set of very dissimilar negatives — whose strongest score
+    # is low — from computing a *looser* cutoff and widening the tag.
+    threshold = max(float(row["threshold"]), float(negative_scores.max()) + 0.01, MIN_THRESHOLD)
+
+    db.save_concept(name, prototype, threshold, int(row["n_examples"]))
+    return TeachResult(name, int(row["n_examples"]), threshold, 0.0)
+
+
 def teach_from_paths(
     db: Database,
     name: str,
@@ -59,6 +90,13 @@ def teach_from_paths(
     by walking a directory.
     """
     name = validate_tag(name)
+
+    if not paths and negatives:
+        # Counter-examples only: the user dropped "this is NOT that" onto an
+        # existing tag. Saying what a tag excludes should not require restating
+        # what it includes, so the prototype is kept and only the cutoff moves.
+        return _retighten_with_negatives(db, name, negatives, embedder)
+
     kept, vectors = embedder.embed_paths([Path(p) for p in paths])
     if len(kept) == 0:
         raise ValueError("none of the dropped files could be read as images")

@@ -1,4 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
 
 /**
  * Owns the `siftr serve` child process.
@@ -17,6 +19,68 @@ export interface ServiceHandle {
 
 const READY_TIMEOUT_MS = 60_000;
 
+/**
+ * Where to look for the siftr service, in order.
+ *
+ * A bundled interpreter wins when one is shipped in the app's resources; a
+ * packaged build that vendors Python drops it there. Otherwise we fall back to
+ * whatever `siftr` is on PATH, which is what a `pip install -e '.[ui]'`
+ * development setup provides.
+ *
+ * PATH is looked up explicitly rather than relying on the inherited environment:
+ * a GUI app launched from Finder gets a minimal PATH that does not include
+ * Homebrew, pyenv, or a virtualenv's bin, so `siftr` would appear missing on a
+ * machine where it is plainly installed.
+ */
+const EXTRA_PATHS = [
+    '/opt/homebrew/bin',
+    '/usr/local/bin',
+    `${process.env.HOME}/.local/bin`,
+    `${process.env.HOME}/Library/Python/3.12/bin`,
+];
+
+export function resolveServiceCommand(resourcesPath?: string): string {
+    // An explicit override wins over everything. This is the escape hatch for a
+    // virtualenv install, which is the common case and is never on the system
+    // PATH a GUI app inherits.
+    const override = process.env.SIFTR_BIN;
+    if (override && existsSync(override)) return override;
+
+    if (resourcesPath) {
+        const bundled = path.join(resourcesPath, 'python', 'bin', 'siftr');
+        if (existsSync(bundled)) return bundled;
+    }
+    for (const dir of EXTRA_PATHS) {
+        const candidate = path.join(dir, 'siftr');
+        if (existsSync(candidate)) return candidate;
+    }
+    return 'siftr';
+}
+
+export function augmentedPath(): string {
+    const current = process.env.PATH ?? '';
+    const missing = EXTRA_PATHS.filter((dir) => !current.split(':').includes(dir));
+    return [current, ...missing].filter(Boolean).join(':');
+}
+
+export class ServiceUnavailable extends Error {
+    readonly guidance: string;
+
+    constructor(message: string, guidance: string) {
+        super(message);
+        this.name = 'ServiceUnavailable';
+        this.guidance = guidance;
+    }
+}
+
+const INSTALL_HINT =
+    "siftr's Python service was not found.\n\n" +
+    "Install it:\n    pip install 'siftr[ui,faces]'\n\n" +
+    'Already installed in a virtualenv? A packaged app does not inherit your\n' +
+    'shell PATH, so point it at the executable directly:\n' +
+    '    SIFTR_BIN=/path/to/.venv/bin/siftr open -a siftr\n\n' +
+    'Then reopen this app.';
+
 export function startPythonService(
     port: number,
     pythonBin = 'siftr',
@@ -26,9 +90,10 @@ export function startPythonService(
         try {
             child = spawn(pythonBin, ['serve', '--port', String(port)], {
                 stdio: ['ignore', 'pipe', 'pipe'],
+                env: { ...process.env, PATH: augmentedPath() },
             });
         } catch (error) {
-            reject(new Error(`could not start "${pythonBin}": ${String(error)}`));
+            reject(new ServiceUnavailable(String(error), INSTALL_HINT));
             return;
         }
 
@@ -68,10 +133,11 @@ export function startPythonService(
             if (settled) return;
             settled = true;
             clearTimeout(timer);
+            const isMissing = (error as NodeJS.ErrnoException).code === 'ENOENT';
             reject(
-                new Error(
-                    `could not start "${pythonBin}". Install it with: pip install 'siftr[ui]'\n${String(error)}`,
-                ),
+                isMissing
+                    ? new ServiceUnavailable(`"${pythonBin}" not found`, INSTALL_HINT)
+                    : new Error(`could not start "${pythonBin}": ${String(error)}`),
             );
         });
 

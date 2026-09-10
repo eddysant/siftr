@@ -141,6 +141,15 @@ button:focus-visible {
     white-space: pre-wrap;
 }
 
+/* The service-missing message is instructions, not a transient error: it must
+   stay put and stay readable rather than being dismissed by a stray click. */
+.banner.fatal {
+    cursor: default;
+    padding: 14px;
+    line-height: 1.6;
+    border-bottom: 2px solid var(--danger);
+}
+
 /* ---------------------------------------------------------------------- body */
 
 .body {
@@ -285,11 +294,161 @@ button:focus-visible {
     border-top: 1px dashed var(--line);
 }
 
-.new-tag button,
-.new-tag input {
+.new-tag span {
+    display: block;
     width: 100%;
     color: var(--muted);
+    font-size: 11px;
+}
+
+/* Negative drop reads as a *refusal*, so it must not look like a normal drop. */
+.tag-row.drop-negative {
+    background: color-mix(in srgb, var(--danger) 20%, var(--panel));
+    outline-color: var(--danger);
+}
+
+.tag-row.drop-negative .drop-hint {
+    color: var(--danger);
+}
+
+.tag-count.person {
+    color: var(--ok);
+}
+
+.rail-tip {
+    margin: 0;
+    padding: 0 12px 10px;
+    font-size: 10px;
+    color: var(--muted);
+}
+
+.rail-head .clear {
+    padding: 2px 8px;
+    font-size: 11px;
+}
+
+.cluster-list {
+    list-style: none;
+    margin: 0;
+    padding: 0 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.cluster {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 5px;
     text-align: left;
+    font-size: 11px;
+    color: var(--muted);
+}
+
+.cluster img {
+    width: 34px;
+    height: 34px;
+    object-fit: cover;
+    flex: none;
+    border: 1px solid var(--line);
+}
+
+/* ------------------------------------------------------------------ toolbar */
+
+.selection {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 8px;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+}
+
+.selection select,
+.selection button {
+    font: inherit;
+    font-size: 11px;
+    padding: 2px 6px;
+    background: var(--panel-2);
+    color: var(--ink);
+    border: 1px solid var(--line);
+}
+
+.progress {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.progress button {
+    padding: 2px 10px;
+    font-size: 11px;
+}
+
+.banner.warn {
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: default;
+}
+
+.banner.warn button {
+    padding: 2px 10px;
+    font-size: 11px;
+}
+
+/* -------------------------------------------------------------------- modal */
+
+.modal-backdrop {
+    position: fixed;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    background: color-mix(in srgb, var(--bg) 72%, transparent);
+    z-index: 20;
+}
+
+.modal {
+    width: 340px;
+    padding: 16px;
+    background: var(--panel);
+    border: 1px solid var(--accent);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.modal h3 {
+    margin: 0;
+    font-size: 12px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--accent);
+}
+
+.modal p {
+    margin: 0;
+    font-size: 11px;
+}
+
+.modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.modal .primary {
+    background: var(--accent);
+    color: var(--accent-ink);
+    border-color: var(--accent);
+}
+
+.modal .primary:hover:not(:disabled) {
+    color: var(--accent-ink);
 }
 
 /* ---------------------------------------------------------------------- grid */

@@ -29,3 +29,5 @@ desktop/node_modules/
 desktop/dist/
 desktop/dist-electron/
 desktop/release/
+desktop/resources/python/*
+!desktop/resources/python/README.md

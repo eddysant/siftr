@@ -1,7 +1,12 @@
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, shell } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { startPythonService, type ServiceHandle } from './pythonService';
+import {
+    resolveServiceCommand,
+    ServiceUnavailable,
+    startPythonService,
+    type ServiceHandle,
+} from './pythonService';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEV_URL = process.env.VITE_DEV_SERVER_URL;
@@ -144,14 +149,16 @@ ipcMain.handle('shell:reveal', (_event, target: string) => shell.showItemInFolde
 
 app.whenReady().then(async () => {
     try {
-        service = await startPythonService(SERVICE_PORT);
+        service = await startPythonService(SERVICE_PORT, resolveServiceCommand(process.resourcesPath));
         registerThumbProtocol(service);
     } catch (error) {
         // Start the window regardless so the failure is visible in the UI rather
         // than as a silent no-launch.
         createWindow();
+        const message =
+            error instanceof ServiceUnavailable ? error.guidance : String(error);
         window?.webContents.once('did-finish-load', () =>
-            window?.webContents.send('siftr:service-error', String(error)),
+            window?.webContents.send('siftr:service-error', message),
         );
         return;
     }

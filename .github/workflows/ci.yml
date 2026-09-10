@@ -56,3 +56,13 @@ jobs:
         # Catches the class of bug that only appears at bundle time — the
         # preload must come out as CommonJS or Electron silently refuses it.
         run: npx vite build
+      - name: Check the preload is CommonJS
+        # A sandboxed Electron preload cannot be ESM. Built as ESM it fails at
+        # runtime with only "Unable to load preload script", so assert the shape
+        # here rather than discovering it by launching the app.
+        run: |
+          if grep -q '^import ' dist-electron/preload.mjs; then
+            echo "::error::preload.mjs is ESM; Electron requires CommonJS"
+            exit 1
+          fi
+          echo "preload is CommonJS"

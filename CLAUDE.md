@@ -131,13 +131,14 @@ renderer never holds it.
 
 ## Testing
 
-`pytest` — 206 tests, hermetic. It never downloads CLIP or InsightFace: a
+`pytest` — 227 tests, hermetic. It never downloads CLIP or InsightFace: a
 deterministic colour-based `FakeEmbedder` and a `StubAnalyzer` stand in
 (`tests/conftest.py`, `tests/test_faces.py`), because the logic worth testing
 (storage, thresholds, reductions, placement, arg parsing) is independent of which
 model produced the vectors. That keeps CI offline and sub-second.
 
-`cd desktop && npx vitest run` — 12 tests over the pure ANY/ALL filter logic.
+`cd desktop && npx vitest run` — 17 tests over the pure ANY/ALL filter and
+drop-payload logic.
 
 Real-model verification is manual. What was checked on a synthetic 21-image
 library (7 bicycles, 7 sunsets, 7 blueprints) plus two 3s videos:
@@ -157,14 +158,41 @@ counts render, 21/21 thumbnails load through `siftr://`, ANY gives the union
 (7 -> 6), and dropping 7 files on the new-tag target created the tag, scored, and
 renamed all 7 — while removing a now-stale `[wheels]` bracket from another file.
 
+## Packaging
+
+`cd desktop && npm run dist` produces an unsigned DMG (117 MB) via
+electron-builder. It bundles the UI but **not** Python. That is a deliberate
+call, not an omission: torch is ~590 MB and onnxruntime ~80 MB, so vendoring the
+Python side turns a 117 MB DMG into roughly 1.5 GB before any model downloads
+(the HF and InsightFace caches are another ~1.2 GB at first run).
+
+Service discovery order is override → bundled → PATH probe
+(`electron/pythonService.ts`):
+
+- `SIFTR_BIN` wins. This is the escape hatch for a virtualenv install, which is
+  the common case and is never on the PATH a GUI app inherits.
+- `Contents/Resources/python/bin/siftr` if a build vendored one. `extraResources`
+  copies `desktop/resources/python` there; a plain `.venv` will NOT work when
+  copied in, because its `pyvenv.cfg` points at the interpreter it was made from.
+- Then a fixed list of likely bin directories, because a Finder-launched app gets
+  a minimal PATH without Homebrew, pyenv, or any venv.
+
+When none is found the app shows install instructions rather than failing
+silently. That message is held in `fatal` state, separate from `error`: with no
+service every request fails too, and those generic failures would otherwise bury
+the one message that says what to do.
+
 ## Not done yet
 
-1. **No face *clustering*.** Unidentified faces are stored but never grouped, so
-   there is no "who is this person who appears 40 times?" flow. The embeddings
-   are already in `file_faces`; this is a query plus a clustering pass.
-2. **`apply_concept` rescans every embedding.** Fine to ~100k vectors; beyond
-   that it wants an ANN index (hnswlib/faiss) rather than a full scan.
-3. **No incremental video re-sampling.** Changing `--video-samples` needs
-   `--force` on the whole library.
-4. **HEIC depends on Pillow's HEIF support**, which is not present in every
-   wheel. Untested here.
+1. **Scoring still scans every embedding**, though now once for all tags rather
+   than once per tag (`service.score_library` stacks prototypes into one matmul).
+   Beyond roughly a few hundred thousand vectors it wants an ANN index
+   (hnswlib/faiss); the linear scan is fine below that and has no dependencies.
+2. **Face detection on real photographs is unverified here.** The models load and
+   run, and every code path is covered with stub embeddings, but synthetic
+   drawings are not detected by RetinaFace (it is trained on photos) and no real
+   face images were used. Verify with `siftr add-person "Name" ~/some/photos`.
+3. **No Python in the packaged app** — see Packaging above for why.
+4. **Clustering is single-link**, which can chain two people together through an
+   ambiguous face. Fine for proposing groups a human confirms; a proper
+   agglomerative pass with a merge criterion would be more robust.
