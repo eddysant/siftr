@@ -34,3 +34,25 @@ jobs:
         run: ruff format --check siftr tests
       - name: Test
         run: pytest -q
+
+  desktop:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - run: npm ci
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Test
+        run: npx vitest run
+      - name: Build
+        # Catches the class of bug that only appears at bundle time — the
+        # preload must come out as CommonJS or Electron silently refuses it.
+        run: npx vite build

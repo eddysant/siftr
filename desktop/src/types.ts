@@ -1,0 +1,42 @@
+export interface MediaFile {
+    id: number;
+    path: string;
+    name: string;
+    kind: 'image' | 'video';
+    size: number;
+    tags: string[];
+    people: string[];
+}
+
+export interface Tag {
+    name: string;
+    threshold: number;
+    examples: number;
+    matches: number;
+}
+
+export interface Job {
+    id: string;
+    kind: string;
+    state: 'running' | 'done' | 'failed' | 'cancelled';
+    message: string;
+    current: number;
+    total: number;
+    result: unknown;
+    error: string | null;
+}
+
+export type MatchMode = 'any' | 'all';
+
+declare global {
+    interface Window {
+        api: {
+            request<T>(method: string, path: string, body?: unknown): Promise<T>;
+            thumbUrl(path: string, size?: number): string;
+            chooseFolder(): Promise<string | null>;
+            revealInFinder(path: string): Promise<void>;
+            pathsForFiles(files: File[]): string[];
+            onServiceError(handler: (message: string) => void): void;
+        };
+    }
+}

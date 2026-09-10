@@ -117,6 +117,11 @@ def create_app(db_path: Path | None = None, token: str | None = None):
     app.state.token = api_token
     app.state.db_path = resolved_db
     app.state.allowlist = Allowlist()
+    # Rebuild consent from the index: a library indexed in an earlier session or
+    # from the CLI must be readable now, or every thumbnail 403s.
+    with Database(resolved_db) as _seed:
+        for root in _seed.list_roots():
+            app.state.allowlist.allow(Path(root))
     app.state.jobs = JobRunner()
     app.state.embedder = None
 
@@ -271,6 +276,8 @@ def create_app(db_path: Path | None = None, token: str | None = None):
         if not folder.exists():
             raise HTTPException(status_code=404, detail=f"no such folder: {folder}")
         app.state.allowlist.allow(folder)
+        with open_db() as db:
+            db.add_root(folder)
 
         def work(job) -> dict:
             with open_db() as db:

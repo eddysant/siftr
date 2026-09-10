@@ -23,7 +23,7 @@ import numpy as np
 
 from .vectors import from_blob, to_blob
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -49,6 +49,15 @@ CREATE TABLE IF NOT EXISTS embeddings (
     vector      BLOB NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_embeddings_file ON embeddings(file_id);
+
+-- Folders the user has opened for indexing. Persisted because the API's
+-- read allowlist is rebuilt from this at startup: a library indexed in an
+-- earlier session (or from the CLI) must still be readable by the UI, and
+-- consent to read a folder is exactly what indexing it expresses.
+CREATE TABLE IF NOT EXISTS roots (
+    path       TEXT PRIMARY KEY,
+    added_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
 
 CREATE TABLE IF NOT EXISTS concepts (
     id         INTEGER PRIMARY KEY,
@@ -555,6 +564,18 @@ class Database:
     def file_id_for_path(self, path) -> int | None:
         row = self.conn.execute("SELECT id FROM files WHERE path = ?", (str(path),)).fetchone()
         return int(row["id"]) if row else None
+
+    # ------------------------------------------------------------------ roots
+
+    def add_root(self, path) -> None:
+        self.conn.execute(
+            "INSERT INTO roots (path) VALUES (?) ON CONFLICT(path) DO NOTHING",
+            (str(Path(path).expanduser().resolve()),),
+        )
+        self.conn.commit()
+
+    def list_roots(self) -> list[str]:
+        return [r["path"] for r in self.conn.execute("SELECT path FROM roots ORDER BY added_at")]
 
     def commit(self) -> None:
         self.conn.commit()

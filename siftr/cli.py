@@ -206,6 +206,10 @@ def _cmd_index(args, db: Database, say) -> int:
         removed = db.forget_missing()
         say(f"pruned {removed} missing file(s)")
 
+    # Record the folder so the desktop UI may read it later; indexing is the
+    # act of consent.
+    db.add_root(args.folder)
+
     stats = build_index(
         db,
         args.folder,

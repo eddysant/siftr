@@ -88,13 +88,56 @@ produced was noise. Nothing from that codebase survives except the general idea.
   mismatch there would silently misalign embeddings against their files.
 - **Indexing commits per file**, so an interrupted scan keeps its work.
 
+## Desktop app (`desktop/`)
+
+Electron 43 + React 19 + TS + Vite 8, deliberately mirroring photo-slap's
+structure and look. Main spawns `siftr serve` and owns the API token; the
+renderer never holds it.
+
+| Piece | Role |
+|---|---|
+| `electron/main.ts` | window, CSP, navigation guards, `siftr://` protocol, IPC proxy |
+| `electron/pythonService.ts` | spawns `siftr serve`, reads the token off stdout |
+| `electron/preload.ts` | the entire renderer surface via `contextBridge` |
+| `src/App.tsx` | state, job polling, teach/score/undo orchestration |
+| `src/components/TagRail.tsx` | tags as drop targets, ANY/ALL toggle |
+| `src/components/Grid.tsx` | windowed thumbnail grid, drag source, tag chips |
+| `src/filter.ts` | pure ANY/ALL filtering, tested without rendering |
+
+### Desktop gotchas
+
+- **The preload MUST build as CommonJS.** A sandboxed Electron preload cannot be
+  ESM. Built as ESM it fails with only "Unable to load preload script" in the
+  console, `window.api` is undefined, and the renderer dies on first access. Use
+  vite-plugin-electron's `simple({ main, preload })` form — its dedicated preload
+  path emits CJS even in an ESM package. A generic `entry` goes through the
+  defaults and emits ESM.
+- **Vite 8 bundles with Rolldown**: `build.rollupOptions` is silently ignored;
+  it is `rolldownOptions`.
+- **The grid's ResizeObserver needs the scroller to always exist.** An early
+  `return` for the empty state meant the ref was null on the first render (the
+  library is always empty then), so the observer was never attached and the
+  effect — deps `[]` — never re-ran. The grid stayed at a zero-width viewport
+  forever: one column, four cells, no matter the window size.
+- **The token never crosses the context bridge.** The renderer asks main to make
+  requests, so a compromised renderer cannot exfiltrate a credential it never
+  held. `siftr://` exists for the same reason: an `<img>` cannot send an
+  Authorization header, and a token in a query string would land in the DOM.
+- **The server's read allowlist is rebuilt from the `roots` table at startup.**
+  It used to live only in memory, so a library indexed from the CLI or in an
+  earlier session made every thumbnail 403.
+- **`webUtils.getPathForFile`** resolves dropped files; `File.path` was removed
+  in Electron 32+ and it must be called from the preload.
+
 ## Testing
 
-`pytest` — 100 tests, hermetic. It never downloads CLIP or InsightFace: a
+`pytest` — 206 tests, hermetic. It never downloads CLIP or InsightFace: a
 deterministic colour-based `FakeEmbedder` and a `StubAnalyzer` stand in
 (`tests/conftest.py`, `tests/test_faces.py`), because the logic worth testing
 (storage, thresholds, reductions, placement, arg parsing) is independent of which
 model produced the vectors. That keeps CI offline and sub-second.
+
+`cd desktop && npx vitest run` — 12 tests over the pure ANY/ALL filter logic.
 
 Real-model verification is manual. What was checked on a synthetic 21-image
 library (7 bicycles, 7 sunsets, 7 blueprints) plus two 3s videos:
@@ -106,6 +149,13 @@ library (7 bicycles, 7 sunsets, 7 blueprints) plus two 3s videos:
 - video sampling via the ffmpeg fallback → 4 frames per clip, one hit per file
 - re-index → 21 unchanged, 0 re-embedded
 - InsightFace `buffalo_l` loads and runs inference (0 faces on a blank image)
+
+The desktop app was driven headlessly over the DevTools Protocol
+(`SIFTR_DEBUG_PORT`, mirroring photo-slap's `PHOTO_SLAP_DEBUG_PORT`): tags and
+counts render, 21/21 thumbnails load through `siftr://`, ANY gives the union
+(14) and ALL the intersection (0), an override drops one file from an ALL result
+(7 -> 6), and dropping 7 files on the new-tag target created the tag, scored, and
+renamed all 7 — while removing a now-stale `[wheels]` bracket from another file.
 
 ## Not done yet
 

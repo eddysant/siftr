@@ -134,6 +134,39 @@ Note that text and example searches are not on the same scale — CLIP text
 similarities run much lower than image-image ones — so a threshold tuned for
 `--examples` will reject everything under `--text`.
 
+## Desktop app
+
+A photo-slap-style UI lives in `desktop/`. Tags are taught by dragging photos
+onto them, a photo can carry several tags at once, and matched tags are written
+into filenames.
+
+```bash
+pip install -e '.[ui,faces]'      # the API the UI talks to
+cd desktop && npm install && npm run dev
+```
+
+The app starts `siftr serve` itself and talks to it over a local HTTP API. That
+indirection exists because loading CLIP costs several seconds; a resident process
+pays it once instead of on every click.
+
+- **Drag photos onto a tag** to teach it. Dropping onto the target at the bottom
+  of the rail makes a new tag. Photos can come from the grid or from Finder.
+- **Click tags** in the rail to filter, and use **ANY / ALL** to switch between
+  the union and the intersection of what you selected.
+- **Click a chip** on a photo to say the model got that one wrong. The correction
+  survives re-scoring, and the photo becomes a training example for that tag.
+- **Filenames are updated automatically** as the library is scored. `Undo
+  renames` reverses the last batch.
+
+### About the automatic renaming
+
+Every rename batch is journaled to `.siftr-renames.json` at the library root, so
+`Undo renames` can always walk it back. Only bracket groups matching a known
+siftr tag are touched — if mediate has written `[2]` or `[site 3]` into a
+filename, those stay exactly where they are. Re-scoring converges rather than
+appending, and a tag that stops matching loses its bracket. Nothing is ever
+overwritten: a name that is already taken gets a numeric suffix.
+
 ## Where things live
 
 The index is a single SQLite file at `~/.siftr/index.db` (override with

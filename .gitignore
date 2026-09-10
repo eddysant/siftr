@@ -23,3 +23,9 @@ build/
 
 # OS
 .DS_Store
+
+# Desktop app
+desktop/node_modules/
+desktop/dist/
+desktop/dist-electron/
+desktop/release/

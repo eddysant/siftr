@@ -1,0 +1,394 @@
+/* Retro-dark, in the same family as photo-slap: near-black ground, a single
+   warm accent, hard edges, chunky hit targets. */
+
+:root {
+    --bg: #14131a;
+    --panel: #1c1b24;
+    --panel-2: #232230;
+    --line: #322f42;
+    --ink: #e8e6f0;
+    --muted: #8d88a8;
+    --accent: #ffb020;
+    --accent-ink: #14131a;
+    --danger: #ff5f56;
+    --ok: #4fd18b;
+
+    color-scheme: dark;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+    height: 100%;
+    margin: 0;
+}
+
+body {
+    background: var(--bg);
+    color: var(--ink);
+    font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+}
+
+.app {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+/* ------------------------------------------------------------------- top bar */
+
+.bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px 8px 84px; /* room for the macOS traffic lights */
+    background: var(--panel);
+    border-bottom: 1px solid var(--line);
+    -webkit-app-region: drag;
+}
+
+.bar > * {
+    -webkit-app-region: no-drag;
+}
+
+.brand {
+    color: var(--accent);
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    margin-right: 6px;
+}
+
+button {
+    font: inherit;
+    color: var(--ink);
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    padding: 5px 10px;
+    cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+button:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+input {
+    font: inherit;
+    color: var(--ink);
+    background: var(--bg);
+    border: 1px solid var(--line);
+    padding: 5px 8px;
+}
+
+input:focus-visible,
+button:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+}
+
+.search {
+    width: 200px;
+}
+
+.check {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    color: var(--muted);
+}
+
+.spacer {
+    flex: 1;
+}
+
+.count {
+    color: var(--muted);
+}
+
+/* ------------------------------------------------------------------- banners */
+
+.progress,
+.banner {
+    padding: 6px 14px;
+    border-bottom: 1px solid var(--line);
+    background: var(--panel-2);
+    color: var(--muted);
+}
+
+.progress {
+    color: var(--accent);
+}
+
+.banner {
+    cursor: pointer;
+    color: var(--ok);
+}
+
+.banner.error {
+    color: var(--danger);
+    white-space: pre-wrap;
+}
+
+/* ---------------------------------------------------------------------- body */
+
+.body {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+}
+
+/* ------------------------------------------------------------------ tag rail */
+
+.rail {
+    width: 250px;
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    background: var(--panel);
+    border-right: 1px solid var(--line);
+    overflow-y: auto;
+}
+
+.rail-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--line);
+    position: sticky;
+    top: 0;
+    background: var(--panel);
+}
+
+.rail-head h2 {
+    margin: 0;
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+}
+
+.mode-toggle {
+    display: flex;
+}
+
+.mode-toggle button {
+    padding: 2px 8px;
+    font-size: 11px;
+}
+
+.mode-toggle button.active {
+    background: var(--accent);
+    color: var(--accent-ink);
+    border-color: var(--accent);
+}
+
+.tag-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.tag-row {
+    position: relative;
+    border-bottom: 1px solid var(--line);
+}
+
+.tag-row.selected {
+    background: var(--panel-2);
+    box-shadow: inset 3px 0 0 var(--accent);
+}
+
+/* The drop affordance has to be unmistakable — dropping retrains the tag and
+   can rename files on disk. */
+.tag-row.drop-active,
+.new-tag.drop-active {
+    background: color-mix(in srgb, var(--accent) 18%, var(--panel));
+    outline: 2px dashed var(--accent);
+    outline-offset: -3px;
+}
+
+.tag-main {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
+    width: 100%;
+    background: none;
+    border: 0;
+    padding: 9px 12px 3px;
+    text-align: left;
+}
+
+.tag-main:hover:not(:disabled) {
+    color: var(--accent);
+}
+
+.tag-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tag-count {
+    color: var(--accent);
+    font-weight: 700;
+}
+
+.tag-meta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 12px 8px;
+    font-size: 11px;
+    color: var(--muted);
+}
+
+.tag-forget {
+    margin-left: auto;
+    padding: 0 5px;
+    line-height: 1.2;
+    background: none;
+    border: 0;
+    color: var(--muted);
+}
+
+.tag-forget:hover {
+    color: var(--danger) !important;
+}
+
+.drop-hint {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    background: color-mix(in srgb, var(--bg) 72%, transparent);
+    color: var(--accent);
+    pointer-events: none;
+    font-size: 11px;
+}
+
+.new-tag {
+    padding: 10px;
+    border-top: 1px dashed var(--line);
+}
+
+.new-tag button,
+.new-tag input {
+    width: 100%;
+    color: var(--muted);
+    text-align: left;
+}
+
+/* ---------------------------------------------------------------------- grid */
+
+.grid-scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px;
+}
+
+.grid {
+    display: grid;
+    justify-content: start;
+    align-content: start;
+}
+
+.grid-empty {
+    display: grid;
+    place-content: center;
+    text-align: center;
+    color: var(--ink);
+    min-height: 50vh;
+}
+
+.muted {
+    color: var(--muted);
+}
+
+.cell {
+    position: relative;
+    margin: 0;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    overflow: hidden;
+    cursor: pointer;
+}
+
+.cell.selected {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent);
+}
+
+.cell img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.badge-video {
+    position: absolute;
+    top: 5px;
+    right: 6px;
+    padding: 1px 5px;
+    font-size: 10px;
+    background: color-mix(in srgb, var(--bg) 78%, transparent);
+    color: var(--accent);
+}
+
+.cell figcaption {
+    position: absolute;
+    inset: auto 0 0 0;
+    padding: 4px 5px;
+    background: linear-gradient(transparent, color-mix(in srgb, var(--bg) 92%, transparent) 42%);
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.cell-name {
+    font-size: 10px;
+    color: var(--ink);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+}
+
+.chip {
+    font: inherit;
+    font-size: 10px;
+    padding: 0 5px;
+    background: var(--accent);
+    color: var(--accent-ink);
+    border: 0;
+    cursor: pointer;
+}
+
+.chip:hover {
+    background: var(--danger) !important;
+    color: var(--ink) !important;
+}
+
+.chip.person {
+    background: var(--ok);
+    cursor: default;
+}
