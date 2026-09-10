@@ -20,7 +20,8 @@ dependencies = [
 [project.optional-dependencies]
 faces = ["insightface>=0.7.3", "onnxruntime>=1.17"]
 video = ["av>=12.0"]
-dev = ["pytest>=8.0", "ruff>=0.4"]
+ui = ["fastapi>=0.110", "uvicorn>=0.27"]
+dev = ["pytest>=8.0", "ruff>=0.4", "httpx>=0.27"]
 
 [project.scripts]
 siftr = "siftr.cli:main"

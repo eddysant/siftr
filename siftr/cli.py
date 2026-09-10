@@ -145,6 +145,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_rematch.add_argument("--threshold", type=float, default=None)
 
+    p_serve = sub.add_parser(
+        "serve", parents=[common], help="run the local API that backs the desktop UI"
+    )
+    p_serve.add_argument("--host", default="127.0.0.1")
+    p_serve.add_argument("--port", type=int, default=8765)
+
     return parser
 
 
@@ -180,6 +186,7 @@ def _dispatch(args, db: Database, say) -> int:
         "status": _cmd_status,
         "forget": _cmd_forget,
         "rematch": _cmd_rematch,
+        "serve": _cmd_serve,
     }
     return handlers[args.command](args, db, say)
 
@@ -390,6 +397,17 @@ def _cmd_forget(args, db: Database, say) -> int:
         print(f"error: no such {args.kind}: {args.name}", file=sys.stderr)
         return 1
     say(f"forgot {args.kind} '{args.name}'")
+    return 0
+
+
+def _cmd_serve(args, db: Database, say) -> int:
+    from .server import serve
+
+    # The database is opened per-request inside the server; close this one so the
+    # two do not hold separate write connections to the same file.
+    db.close()
+    say(f"siftr serving on http://{args.host}:{args.port}")
+    serve(host=args.host, port=args.port, db_path=db.path)
     return 0
 
 

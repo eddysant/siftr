@@ -106,6 +106,58 @@ def learn(
     return Concept(name, prototype, max(floor, MIN_THRESHOLD), len(kept), cohesion)
 
 
+def calibrate_threshold(
+    positive_scores: np.ndarray,
+    library_scores: np.ndarray,
+    percentile: float = 10.0,
+    min_gap: float = 0.02,
+) -> float:
+    """Pick a cutoff by finding the gap between matches and non-matches.
+
+    The naive rule — "accept anything as similar to the prototype as the examples
+    are" — fails badly when the examples are tight. A set of near-identical
+    examples has ~0.99 self-similarity, which then demands near-identity from the
+    library and matches almost nothing. That is precisely the drag-and-drop case,
+    where no negatives are supplied.
+
+    So the library itself becomes the negative pool. Scores of everything indexed
+    are sorted, and the threshold is placed in the widest gap between consecutive
+    scores in the plausible range — the empty band that separates "things like
+    this" from "everything else". Using the gap rather than a fixed percentile
+    means it does not matter whether the tag matches 1% or 40% of the library.
+
+    Falls back to the positives' own percentile when there is no library to
+    calibrate against, or when the scores are too smooth to show a real boundary.
+    """
+    floor = float(np.percentile(positive_scores, percentile))
+    fallback = max(floor, MIN_THRESHOLD)
+
+    library = np.asarray(library_scores, dtype=np.float64).ravel()
+    if library.size < 8:
+        return fallback
+
+    # Consider everything at or below `floor`: a threshold above it would reject
+    # the examples themselves. The band must NOT also be clipped at
+    # MIN_THRESHOLD — the non-matches are exactly what sits below it, so
+    # excluding them hides the gap this function exists to find.
+    band = np.sort(library[library <= floor])[::-1]
+    if band.size < 2:
+        return fallback
+
+    gaps = band[:-1] - band[1:]
+    widest = int(np.argmax(gaps))
+    if float(gaps[widest]) < min_gap:
+        # No real separation — the library grades smoothly into the concept, so
+        # there is no honest boundary to find.
+        return fallback
+
+    midpoint = float((band[widest] + band[widest + 1]) / 2.0)
+    # Clamp rather than reject: with very dissimilar negatives the gap's midpoint
+    # can land below the plausibility floor. The ceiling matches `fallback`, so
+    # both paths agree on the loosest threshold ever returned.
+    return float(min(max(midpoint, MIN_THRESHOLD), fallback))
+
+
 def score_against(prototype: np.ndarray, matrix: np.ndarray) -> np.ndarray:
     return cosine(prototype, matrix)
 

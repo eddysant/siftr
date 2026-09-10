@@ -1,0 +1,397 @@
+"""Local HTTP API backing the desktop UI.
+
+Why a server at all: loading CLIP costs several seconds of torch import plus
+model init. Shelling out to the CLI per action would pay that on every click. A
+resident process pays it once.
+
+Security posture — this process can read any image on the machine and rename
+files, so it is treated as privileged:
+
+* Bound to 127.0.0.1 only, never a routable interface.
+* Every request must carry a bearer token minted at startup. Without it any web
+  page the user happens to have open could drive this API, since a browser will
+  happily issue requests to localhost.
+* Thumbnail and file reads are confined to directories the user has actually
+  opened, the same allowlist idea photo-slap uses for its media:// protocol.
+"""
+
+from __future__ import annotations
+
+import io
+import os
+import secrets
+from pathlib import Path
+from typing import Any
+
+from .config import default_db_path
+from .db import Database
+from .jobs import JobRunner
+
+
+class Allowlist:
+    """Directories the user has opened, and therefore consented to siftr reading.
+
+    Paths are resolved before comparison so ``..`` cannot escape, and matching is
+    done segment-wise so ``/photos-private`` is not treated as inside
+    ``/photos``.
+    """
+
+    def __init__(self) -> None:
+        self._roots: list[Path] = []
+
+    def allow(self, path: Path) -> None:
+        resolved = Path(path).expanduser().resolve()
+        if resolved not in self._roots:
+            self._roots.append(resolved)
+
+    @property
+    def roots(self) -> list[str]:
+        return [str(r) for r in self._roots]
+
+    def permits(self, path: Path) -> bool:
+        try:
+            resolved = Path(path).expanduser().resolve()
+        except OSError:
+            return False
+        for root in self._roots:
+            if resolved == root:
+                return True
+            # relative_to raises unless resolved is genuinely inside root, which
+            # is the segment-wise check a string prefix would get wrong.
+            try:
+                resolved.relative_to(root)
+                return True
+            except ValueError:
+                continue
+        return False
+
+    def assert_permits(self, path: Path) -> Path:
+        if not self.permits(path):
+            raise PermissionError(f"path is outside every opened folder: {path}")
+        return Path(path).expanduser().resolve()
+
+
+# Request bodies live at module level, NOT inside create_app. With
+# `from __future__ import annotations` every annotation is a string, and FastAPI
+# resolves those against the function's module globals — a class defined inside
+# create_app is invisible there, so FastAPI silently treats the parameter as a
+# query scalar and every POST fails with a 422.
+try:
+    from pydantic import BaseModel
+
+    class TeachBody(BaseModel):
+        name: str
+        paths: list[str]
+        replace: bool = False
+
+    class OverrideBody(BaseModel):
+        path: str
+        tag: str
+        state: str | None = None
+
+    class IndexBody(BaseModel):
+        folder: str
+        video_samples: int = 8
+        detect_faces: bool = True
+        force: bool = False
+
+except ImportError:  # pragma: no cover - the UI extra is optional
+    TeachBody = OverrideBody = IndexBody = None  # type: ignore[assignment]
+
+
+def create_app(db_path: Path | None = None, token: str | None = None):
+    """Build the FastAPI app. Imported lazily so the CLI need not depend on it."""
+    try:
+        from fastapi import Depends, FastAPI, Header, HTTPException, Query
+        from fastapi.responses import JSONResponse, Response
+    except ImportError as exc:  # pragma: no cover - import guard
+        raise RuntimeError(
+            "The UI server needs extra dependencies. Install them with:\n"
+            "    pip install 'siftr[ui]'"
+        ) from exc
+
+    resolved_db = Path(db_path) if db_path else default_db_path()
+    api_token = token or os.environ.get("SIFTR_TOKEN") or secrets.token_urlsafe(32)
+
+    app = FastAPI(title="siftr", version="0.1.0", docs_url=None, redoc_url=None)
+    app.state.token = api_token
+    app.state.db_path = resolved_db
+    app.state.allowlist = Allowlist()
+    app.state.jobs = JobRunner()
+    app.state.embedder = None
+
+    @app.exception_handler(PermissionError)
+    def _denied(_request, exc: PermissionError):
+        """Allowlist violations are a 403, not a 500.
+
+        Registered app-wide so every path-touching endpoint gets the same
+        answer and none can leak a stack trace by forgetting to catch it.
+        """
+        return JSONResponse(status_code=403, content={"detail": str(exc)})
+
+    def require_token(authorization: str = Header(default="")) -> None:
+        expected = f"Bearer {app.state.token}"
+        # compare_digest rather than == so a wrong token cannot be recovered by
+        # timing the comparison.
+        if not secrets.compare_digest(authorization, expected):
+            raise HTTPException(status_code=401, detail="invalid or missing token")
+
+    guard = [Depends(require_token)]
+
+    def open_db() -> Database:
+        # A fresh connection per request: SQLite objects are not safe to share
+        # across threads, and the job runner uses its own thread.
+        return Database(resolved_db)
+
+    def embedder():
+        if app.state.embedder is None:
+            from .embed import Embedder
+
+            app.state.embedder = Embedder()
+        return app.state.embedder
+
+    # ------------------------------------------------------------- routes
+
+    @app.get("/api/health")
+    def health() -> dict:
+        """Unauthenticated: lets the UI wait for the port without the token."""
+        return {"ok": True, "model_loaded": app.state.embedder is not None}
+
+    @app.get("/api/library", dependencies=guard)
+    def library() -> dict:
+        with open_db() as db:
+            effective = db.effective_tags()
+            files = []
+            for row in db.library_view():
+                files.append(
+                    {
+                        "id": int(row["id"]),
+                        "path": row["path"],
+                        "name": Path(row["path"]).name,
+                        "kind": row["kind"],
+                        "size": int(row["size"]),
+                        "tags": effective.get(int(row["id"]), []),
+                        "people": (row["people"] or "").split(",") if row["people"] else [],
+                    }
+                )
+            return {"files": files, "roots": app.state.allowlist.roots}
+
+    @app.get("/api/tags", dependencies=guard)
+    def tags() -> dict:
+        with open_db() as db:
+            return {
+                "tags": [
+                    {
+                        "name": row["name"],
+                        "threshold": float(row["threshold"]),
+                        "examples": int(row["n_examples"]),
+                        "matches": int(row["n_matches"]),
+                    }
+                    for row in db.list_concepts()
+                ]
+            }
+
+    @app.post("/api/tags", dependencies=guard)
+    def teach(body: TeachBody) -> dict:
+        """Teach a tag from dropped files. This is the drag-and-drop target."""
+        from .service import example_paths_for, teach_from_paths
+
+        paths = [app.state.allowlist.assert_permits(Path(p)) for p in body.paths]
+        with open_db() as db:
+            if not body.replace:
+                # Dropping onto an existing tag adds to it rather than
+                # redefining it, and pinned corrections count as examples too.
+                paths = list(dict.fromkeys([*paths, *map(Path, example_paths_for(db, body.name))]))
+            try:
+                result = teach_from_paths(db, body.name, paths, embedder())
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            return {
+                "name": result.name,
+                "examples": result.n_examples,
+                "threshold": result.threshold,
+                "cohesion": result.cohesion,
+            }
+
+    @app.delete("/api/tags/{name}", dependencies=guard)
+    def forget_tag(name: str) -> dict:
+        with open_db() as db:
+            if not db.delete_concept(name):
+                raise HTTPException(status_code=404, detail=f"no such tag: {name}")
+            return {"deleted": name}
+
+    @app.post("/api/override", dependencies=guard)
+    def override(body: OverrideBody) -> dict:
+        """Force a tag on, suppress it, or hand the decision back to the model."""
+        with open_db() as db:
+            concept = db.get_concept(body.tag)
+            if concept is None:
+                raise HTTPException(status_code=404, detail=f"no such tag: {body.tag}")
+            file_id = db.file_id_for_path(body.path)
+            if file_id is None:
+                raise HTTPException(status_code=404, detail="file is not indexed")
+            try:
+                db.set_override(file_id, int(concept["id"]), body.state)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            return {"path": body.path, "tag": body.tag, "state": body.state}
+
+    @app.get("/api/search", dependencies=guard)
+    def search(
+        tags: str = Query(default=""),
+        mode: str = Query(default="any"),
+        limit: int = Query(default=500),
+    ) -> dict:
+        names = [t for t in (t.strip() for t in tags.split(",")) if t]
+        if mode not in {"any", "all"}:
+            raise HTTPException(status_code=400, detail="mode must be 'any' or 'all'")
+        with open_db() as db:
+            rows = db.files_matching_tags(names, mode=mode, limit=limit)
+            return {
+                "mode": mode,
+                "tags": names,
+                "files": [
+                    {
+                        "id": int(r["id"]),
+                        "path": r["path"],
+                        "name": Path(r["path"]).name,
+                        "kind": r["kind"],
+                        "score": float(r["score"]),
+                        "tags": (r["tags"] or "").split(","),
+                    }
+                    for r in rows
+                ],
+            }
+
+    @app.post("/api/index", dependencies=guard)
+    def start_index(body: IndexBody) -> dict:
+        from .index import build_index
+
+        folder = Path(body.folder).expanduser().resolve()
+        if not folder.exists():
+            raise HTTPException(status_code=404, detail=f"no such folder: {folder}")
+        app.state.allowlist.allow(folder)
+
+        def work(job) -> dict:
+            with open_db() as db:
+
+                def progress(message: str) -> None:
+                    job.message = message
+                    job.current += 1
+
+                stats = build_index(
+                    db,
+                    folder,
+                    embedder(),
+                    video_samples=body.video_samples,
+                    detect_faces=body.detect_faces,
+                    force=body.force,
+                    progress=progress,
+                )
+                return {
+                    "indexed": stats.indexed,
+                    "unchanged": stats.skipped_unchanged,
+                    "failed": stats.failed,
+                    "faces": stats.faces_found,
+                    "errors": stats.errors[:50],
+                }
+
+        try:
+            job = app.state.jobs.submit("index", work)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return job.as_dict()
+
+    @app.post("/api/score", dependencies=guard)
+    def start_score(rename: bool = Query(default=True)) -> dict:
+        """Score the library and, by default, write tags into filenames."""
+        from .service import apply_tags_to_filenames, score_library
+
+        def work(job) -> dict:
+            with open_db() as db:
+                score_library(db, job)
+                out: dict[str, Any] = {"scored": True}
+                if rename:
+                    job.message = "writing tags into filenames"
+                    roots = app.state.allowlist.roots
+                    out["rename"] = apply_tags_to_filenames(
+                        db, root=Path(roots[0]) if roots else None
+                    )
+                return out
+
+        try:
+            job = app.state.jobs.submit("score", work)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return job.as_dict()
+
+    @app.post("/api/renames/undo", dependencies=guard)
+    def undo() -> dict:
+        from .service import undo_renames
+
+        roots = app.state.allowlist.roots
+        if not roots:
+            raise HTTPException(status_code=400, detail="no library folder is open")
+        with open_db() as db:
+            return undo_renames(db, Path(roots[0]))
+
+    @app.get("/api/jobs/{job_id}", dependencies=guard)
+    def job_status(job_id: str) -> dict:
+        job = app.state.jobs.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="no such job")
+        return job.as_dict()
+
+    @app.post("/api/jobs/{job_id}/cancel", dependencies=guard)
+    def job_cancel(job_id: str) -> dict:
+        job = app.state.jobs.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="no such job")
+        job.cancel()
+        return job.as_dict()
+
+    @app.get("/api/thumb", dependencies=guard)
+    def thumb(path: str = Query(...), size: int = Query(default=320)) -> Response:
+        """A downscaled JPEG for the grid.
+
+        The renderer must never paint full-resolution originals — a 48MP photo is
+        a ~200MB texture, and a grid holds hundreds at once.
+        """
+        from PIL import Image
+
+        from .media import load_image
+
+        try:
+            resolved = app.state.allowlist.assert_permits(Path(path))
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+        try:
+            image = load_image(resolved)
+        except Exception as exc:
+            raise HTTPException(status_code=415, detail=f"cannot decode: {exc}") from exc
+
+        image.thumbnail((size, size), Image.LANCZOS)
+        buffer = io.BytesIO()
+        image.save(buffer, format="JPEG", quality=82)
+        return Response(
+            content=buffer.getvalue(),
+            media_type="image/jpeg",
+            # Keyed only on path+size, so a file edited in place would otherwise
+            # keep serving a stale thumbnail.
+            headers={"Cache-Control": "no-cache"},
+        )
+
+    return app
+
+
+def serve(host: str = "127.0.0.1", port: int = 8765, db_path: Path | None = None) -> None:
+    """Run the API. Prints the token on stdout so a launcher can capture it."""
+    import uvicorn
+
+    app = create_app(db_path)
+    # stdout is the handshake channel for the Electron launcher; it reads this
+    # line to learn the token rather than sharing a file or env var.
+    print(f"SIFTR_TOKEN={app.state.token}", flush=True)
+    print(f"SIFTR_URL=http://{host}:{port}", flush=True)
+    uvicorn.run(app, host=host, port=port, log_level="warning")

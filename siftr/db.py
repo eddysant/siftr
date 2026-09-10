@@ -16,14 +16,14 @@ Schema notes
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
 from pathlib import Path
 
 import numpy as np
 
 from .vectors import from_blob, to_blob
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -66,6 +66,18 @@ CREATE TABLE IF NOT EXISTS file_concepts (
     PRIMARY KEY (file_id, concept_id)
 );
 CREATE INDEX IF NOT EXISTS idx_file_concepts_concept ON file_concepts(concept_id);
+
+-- Manual corrections layered over the model's decisions. 'on' forces a tag
+-- that scoring missed, 'off' suppresses one it got wrong. Kept separate from
+-- file_concepts so a re-score can freely replace model output without
+-- destroying the user's corrections.
+CREATE TABLE IF NOT EXISTS concept_overrides (
+    file_id    INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+    concept_id INTEGER NOT NULL REFERENCES concepts(id) ON DELETE CASCADE,
+    state      TEXT NOT NULL CHECK (state IN ('on', 'off')),
+    PRIMARY KEY (file_id, concept_id)
+);
+CREATE INDEX IF NOT EXISTS idx_overrides_concept ON concept_overrides(concept_id);
 
 CREATE TABLE IF NOT EXISTS people (
     id         INTEGER PRIMARY KEY,
@@ -159,6 +171,8 @@ class Database:
         file_id = int(cur.fetchone()[0])
         self.conn.execute("DELETE FROM embeddings WHERE file_id = ?", (file_id,))
         self.conn.execute("DELETE FROM file_faces WHERE file_id = ?", (file_id,))
+        # Deliberately NOT clearing concept_overrides: a re-index re-derives the
+        # model's opinion, but the user's corrections are theirs to keep.
         self.conn.execute("DELETE FROM file_concepts WHERE file_id = ?", (file_id,))
         return file_id
 
@@ -185,6 +199,19 @@ class Database:
 
     def count_files(self) -> int:
         return int(self.conn.execute("SELECT count(*) FROM files").fetchone()[0])
+
+    def rename_file(self, old: Path, new: Path) -> bool:
+        """Point an indexed file at its new path after a rename on disk.
+
+        The index keys on absolute path, so a rename that skipped this would
+        orphan every embedding, face and tag belonging to the file.
+        """
+        cur = self.conn.execute("UPDATE files SET path = ? WHERE path = ?", (str(new), str(old)))
+        return cur.rowcount > 0
+
+    def path_for(self, file_id: int) -> str | None:
+        row = self.conn.execute("SELECT path FROM files WHERE id = ?", (file_id,)).fetchone()
+        return row["path"] if row else None
 
     # ------------------------------------------------------------- embeddings
 
@@ -376,6 +403,158 @@ class Database:
             sql += " LIMIT ?"
             params.append(limit)
         return self.conn.execute(sql, params).fetchall()
+
+    # ----------------------------------------------------------- multi-tag views
+
+    def tags_by_file(self) -> dict[int, list[str]]:
+        """Every scored file mapped to all the concept names it matched.
+
+        One query rather than per-file lookups: the grid needs this for the whole
+        library at once, and N queries over tens of thousands of files is the
+        difference between instant and unusable.
+        """
+        rows = self.conn.execute(
+            """
+            SELECT fc.file_id, c.name
+            FROM file_concepts fc JOIN concepts c ON c.id = fc.concept_id
+            ORDER BY c.name
+            """
+        ).fetchall()
+        out: dict[int, list[str]] = {}
+        for row in rows:
+            out.setdefault(int(row["file_id"]), []).append(row["name"])
+        return out
+
+    def library_view(self) -> list[sqlite3.Row]:
+        """Every indexed file with its matched tags and identified people.
+
+        ``tags`` and ``people`` come back as comma-separated strings; SQLite has
+        no array type and group_concat keeps this to a single query.
+        """
+        return self.conn.execute(
+            """
+            SELECT
+                f.id, f.path, f.kind, f.size, f.mtime_ns,
+                (SELECT group_concat(c.name, ',')
+                   FROM file_concepts fc JOIN concepts c ON c.id = fc.concept_id
+                  WHERE fc.file_id = f.id) AS tags,
+                (SELECT group_concat(DISTINCT p.name)
+                   FROM file_faces ff JOIN people p ON p.id = ff.person_id
+                  WHERE ff.file_id = f.id) AS people
+            FROM files f
+            ORDER BY f.path
+            """
+        ).fetchall()
+
+    def files_matching_tags(
+        self, names: Sequence[str], mode: str = "any", limit: int | None = None
+    ) -> list[sqlite3.Row]:
+        """Files matching several tags at once.
+
+        ``mode="any"`` is the union, ``mode="all"`` the intersection. ALL is done
+        with a HAVING count over the distinct matched concepts rather than
+        chained joins, so it stays one query for any number of tags.
+        """
+        if not names:
+            return []
+        if mode not in {"any", "all"}:
+            raise ValueError(f"mode must be 'any' or 'all', got {mode!r}")
+
+        placeholders = ",".join("?" * len(names))
+        sql = f"""
+            SELECT f.id, f.path, f.kind,
+                   max(fc.score) AS score,
+                   count(DISTINCT c.id) AS matched,
+                   group_concat(c.name, ',') AS tags
+            FROM file_concepts fc
+            JOIN concepts c ON c.id = fc.concept_id
+            JOIN files f ON f.id = fc.file_id
+            WHERE c.name IN ({placeholders})
+            GROUP BY f.id
+        """
+        params: list = list(names)
+        if mode == "all":
+            sql += " HAVING count(DISTINCT c.id) = ?"
+            params.append(len(set(names)))
+        sql += " ORDER BY score DESC"
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
+        return self.conn.execute(sql, params).fetchall()
+
+    # -------------------------------------------------------------- overrides
+
+    def set_override(self, file_id: int, concept_id: int, state: str | None) -> None:
+        """Force a tag on ('on'), suppress it ('off'), or defer to the model (None)."""
+        if state is None:
+            self.conn.execute(
+                "DELETE FROM concept_overrides WHERE file_id = ? AND concept_id = ?",
+                (file_id, concept_id),
+            )
+        else:
+            if state not in {"on", "off"}:
+                raise ValueError(f"state must be 'on', 'off' or None, got {state!r}")
+            self.conn.execute(
+                """
+                INSERT INTO concept_overrides (file_id, concept_id, state)
+                VALUES (?, ?, ?)
+                ON CONFLICT(file_id, concept_id) DO UPDATE SET state = excluded.state
+                """,
+                (file_id, concept_id, state),
+            )
+        self.conn.commit()
+
+    def effective_tags(self) -> dict[int, list[str]]:
+        """Every file's final tag set: model matches, with overrides applied.
+
+        This is the single source of truth for what a file is tagged with —
+        what the grid shows and what gets written into filenames.
+        """
+        rows = self.conn.execute(
+            """
+            SELECT file_id, name FROM (
+                SELECT fc.file_id AS file_id, c.name AS name
+                  FROM file_concepts fc
+                  JOIN concepts c ON c.id = fc.concept_id
+                 WHERE NOT EXISTS (
+                    SELECT 1 FROM concept_overrides o
+                     WHERE o.file_id = fc.file_id
+                       AND o.concept_id = fc.concept_id
+                       AND o.state = 'off'
+                 )
+                UNION
+                SELECT o.file_id AS file_id, c.name AS name
+                  FROM concept_overrides o
+                  JOIN concepts c ON c.id = o.concept_id
+                 WHERE o.state = 'on'
+            )
+            ORDER BY name
+            """
+        ).fetchall()
+        out: dict[int, list[str]] = {}
+        for row in rows:
+            out.setdefault(int(row["file_id"]), []).append(row["name"])
+        return out
+
+    def overrides_for_concept(self, concept_id: int, state: str) -> list[str]:
+        """Paths of files a user has manually forced on/off for a tag.
+
+        The 'on' set doubles as extra training examples: a correction is the
+        strongest signal there is about what a tag should mean.
+        """
+        rows = self.conn.execute(
+            """
+            SELECT f.path FROM concept_overrides o
+            JOIN files f ON f.id = o.file_id
+            WHERE o.concept_id = ? AND o.state = ?
+            """,
+            (concept_id, state),
+        ).fetchall()
+        return [r["path"] for r in rows]
+
+    def file_id_for_path(self, path) -> int | None:
+        row = self.conn.execute("SELECT id FROM files WHERE path = ?", (str(path),)).fetchone()
+        return int(row["id"]) if row else None
 
     def commit(self) -> None:
         self.conn.commit()
