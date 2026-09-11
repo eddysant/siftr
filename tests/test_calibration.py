@@ -6,6 +6,8 @@ threshold matches almost nothing. These tests pin the gap-finding behaviour that
 replaces it.
 """
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -81,3 +83,93 @@ def test_works_when_the_tag_matches_almost_nothing():
     library = np.concatenate([np.array([0.95]), np.full(40, 0.50)])
     threshold = calibrate_threshold(positives, library)
     assert (library >= threshold).sum() == 1
+
+
+# ------------------------------------------- examples must not calibrate themselves
+
+
+def test_library_scores_omits_the_examples(db, tmp_path, make_images, embedder):
+    """The fix itself: the files a prototype was built from must not appear in
+    the pool used to calibrate its threshold."""
+    from siftr.index import build_index
+    from siftr.service import _library_scores
+    from siftr.vectors import centroid
+
+    make_images(tmp_path / "lib", (200, 40, 40), count=10)
+    build_index(db, tmp_path / "lib", embedder, detect_faces=False)
+
+    everything = sorted((tmp_path / "lib").glob("*.png"))
+    examples = everything[:4]
+    _kept, vectors = embedder.embed_paths(examples)
+    prototype = centroid(vectors)
+
+    assert len(_library_scores(db, prototype)) == 10
+    assert len(_library_scores(db, prototype, examples)) == 6
+
+
+def test_teaching_excludes_its_own_examples(db, tmp_path, make_images, embedder, monkeypatch):
+    """End to end: teach_from_paths must pass the examples through to be excluded."""
+    from siftr.index import build_index
+    from siftr.service import teach_from_paths
+
+    make_images(tmp_path / "lib", (200, 40, 40), count=10)
+    build_index(db, tmp_path / "lib", embedder, detect_faces=False)
+    examples = sorted((tmp_path / "lib").glob("*.png"))[:4]
+
+    seen = {}
+    import siftr.service as service_mod
+
+    original = service_mod._library_scores
+
+    def spy(db_, prototype, exclude=()):
+        seen["exclude"] = list(exclude)
+        return original(db_, prototype, exclude)
+
+    monkeypatch.setattr(service_mod, "_library_scores", spy)
+    teach_from_paths(db, "x", examples, embedder)
+
+    assert [Path(p).name for p in seen["exclude"]] == [p.name for p in examples]
+
+
+def test_the_real_world_distribution_that_broke_calibration():
+    """Numbers measured on a real 27-photo library.
+
+    Five examples scored 0.857-0.889 against their own prototype and were the top
+    five in the library; the next photo down was 0.716. With the examples left in
+    the pool the widest gap was that 0.14 between them and everything else, so the
+    threshold came out at 0.786 and the tag matched only its own examples — 0/8 on
+    held-out matches. Excluded, the same data gives a usable cutoff.
+    """
+    positives = np.array([0.857, 0.864, 0.865, 0.879, 0.889])
+    rest = np.array(
+        [
+            0.716,
+            0.705,
+            0.680,
+            0.649,
+            0.632,
+            0.591,
+            0.558,
+            0.523,
+            0.486,
+            0.454,
+            0.445,
+            0.422,
+            0.420,
+            0.409,
+            0.404,
+            0.391,
+            0.387,
+            0.383,
+            0.346,
+            0.343,
+            0.343,
+            0.254,
+        ]
+    )
+
+    with_examples = calibrate_threshold(positives, np.concatenate([positives, rest]))
+    without = calibrate_threshold(positives, rest)
+
+    assert with_examples > rest.max(), "reproduces the bug: nothing but the examples matches"
+    assert without <= rest.max(), "excluded, the threshold admits real matches"

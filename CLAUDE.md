@@ -32,6 +32,14 @@ produced was noise. Nothing from that codebase survives except the general idea.
 - **Prototype, not a trained head.** A concept is the normalized mean of its
   examples. With 5–50 examples and no negatives there is not enough data to fit
   anything larger, and a prototype cannot overfit or diverge.
+- **Calibration must exclude the taught examples** (`service._library_scores`).
+  Examples are usually *in* the library and necessarily score highest against a
+  prototype built from them, so leaving them in the negative pool makes the
+  widest gap "my examples versus everything else" — the threshold lands above
+  every real match and the tag finds only the files it was taught from. Measured
+  on a 27-photo library: 0.786 and 0/8 recall with them in, 0.600 and 5/8 with
+  them out. It also made the result unstable, swinging between 0/8 and 5/8 on
+  different five-example subsets of the same concept.
 - **Threshold selection is the part that actually matters** (`concepts.learn`):
   with negatives, the cutoff goes just above the strongest negative but is
   clamped to the `percentile`-th weakest positive — without that clamp, one
@@ -84,6 +92,40 @@ questions — "same subject" versus "same photograph".
   what this wants an order of magnitude beyond that.
 - Hashes are computed on the indexing worker threads, where they are free next to
   the model work, and stored on `files` (schema v6).
+
+## What tagging is good and bad at
+
+Measured on 27 real photographs (13 with visible arm tattoos, 14 people without),
+teaching "tattoo-sleeve" from five examples and scoring the rest:
+
+| Training | Threshold | Recall | False positives |
+|---|---|---|---|
+| 5 positives | 0.600 | 5/8 | 0/14 |
+| 5 positives + 5 negatives | 0.533 | **7/8** | 0/9 |
+| 9 positives | 0.600 | 3/4 | 0/14 |
+
+- **Counter-examples are worth far more than more examples** for a subtle
+  attribute: five negatives took recall from 5/8 to 7/8, while nearly doubling
+  the positives did not help. This is the case ⌥-drop exists for.
+- **Precision is the easy half.** Zero false positives in every configuration.
+  Recall is where these concepts lose.
+- **What it learns may not be what was asked.** The tag found tattoo *parlour*
+  scenes where the tattoos are small in frame, and missed a field portrait and an
+  extreme close-up of a tattoo. It had learned something closer to "tattoo
+  culture scene" than "tattooed arm" — unsurprising, since CLIP embeds the whole
+  frame and the examples shared a setting.
+- **Whole-image concepts are much easier.** Bicycles/sunsets/blueprints separated
+  by ~0.4 cosine with 7/7 recall and no false positives; an attribute occupying a
+  few percent of the frame separates by ~0.02-0.05. Measured directly: a feature
+  covering 1% of the frame moves the embedding by 0.012 and yields +0.008
+  prototype separation; at 50% it is +0.093.
+- **Do not probe concepts with CLIP text-text similarity.** "tattoo sleeves" vs
+  "bare untattooed arms" scores 0.802, *higher* than vs "heavily tattooed"
+  (0.787) — shared vocabulary dominates. It says nothing about image behaviour.
+
+The obvious next step for attribute tagging is embedding **person crops** rather
+than whole frames: the face detector already gives boxes, and a sleeve that is 3%
+of a photo is 60% of a crop.
 
 ## Indexing performance
 

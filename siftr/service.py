@@ -23,18 +23,34 @@ from .rename import apply_renames, plan_moves, plan_renames, undo_last
 from .vectors import centroid, cosine, from_blob
 
 
-def _library_scores(db: Database, prototype: np.ndarray) -> np.ndarray:
+def _library_scores(
+    db: Database, prototype: np.ndarray, exclude: Sequence[Path] = ()
+) -> np.ndarray:
     """Every indexed embedding's similarity to a prototype.
 
-    The negative pool for threshold calibration. Returns an empty array when
-    nothing is indexed yet, or when the index was built with a different model,
-    in which case the caller falls back to a positives-only rule.
+    The negative pool for threshold calibration. ``exclude`` must carry the files
+    the prototype was built from, and leaving them in is not a rounding error —
+    it breaks calibration outright. Examples are usually *in* the library, where
+    they necessarily score highest, so the widest gap in the distribution becomes
+    "my examples versus everything else". The resulting threshold then matches
+    the examples and nothing more. Measured on a 27-photo library: leaving them
+    in gave a threshold of 0.786 and 0/8 recall on held-out matches.
+
+    Returns an empty array when nothing else is indexed, or when the index was
+    built with a different model, in which case the caller falls back to a
+    positives-only rule.
     """
+    skip = {str(Path(p).resolve()) for p in exclude}
     chunks: list[np.ndarray] = []
-    for _rows, matrix in db.iter_embeddings():
+    for rows, matrix in db.iter_embeddings():
         if matrix.shape[1] != prototype.shape[0]:
             return np.empty(0, dtype=np.float32)
-        chunks.append(cosine(prototype, matrix))
+        scores = cosine(prototype, matrix)
+        if skip:
+            keep = [i for i, r in enumerate(rows) if str(Path(r["path"]).resolve()) not in skip]
+            scores = scores[keep]
+        if len(scores):
+            chunks.append(scores)
     return np.concatenate(chunks) if chunks else np.empty(0, dtype=np.float32)
 
 
@@ -107,7 +123,7 @@ def teach_from_paths(
     cohesion = float(scores.mean())
     # No explicit negatives is the normal case when files are dropped onto a
     # tag, so the indexed library stands in as the negative pool.
-    threshold = calibrate_threshold(scores, _library_scores(db, prototype))
+    threshold = calibrate_threshold(scores, _library_scores(db, prototype, kept))
 
     if negatives:
         _, negative_vectors = embedder.embed_paths([Path(p) for p in negatives])
