@@ -1,0 +1,91 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check the tag matches the packaged version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          VERSION="${TAG#v}"
+          PKG=$(node -p "require('./package.json').version")
+          PY=$(python -c "import tomllib,pathlib; print(tomllib.loads(pathlib.Path('../pyproject.toml').read_text())['project']['version'])")
+          echo "tag=$VERSION desktop=$PKG python=$PY"
+          if [ "$PKG" != "$VERSION" ] || [ "$PY" != "$VERSION" ]; then
+            echo "::error::tag ${TAG} does not match desktop/package.json ($PKG) and/or pyproject.toml ($PY); bump both before tagging"
+            exit 1
+          fi
+
+      - run: npm ci
+      - name: Regenerate the icon
+        # Built from source rather than committed as an opaque binary, so a
+        # change to make-icon.py cannot silently fail to reach a release.
+        run: |
+          python -m pip install --quiet Pillow
+          python build/make-icon.py
+      - run: npx tsc --noEmit
+      - run: npx vitest run
+      - run: npx vite build
+      - name: Check the preload is CommonJS
+        run: |
+          if grep -q '^import ' dist-electron/preload.mjs; then
+            echo "::error::preload.mjs is ESM; Electron requires CommonJS"
+            exit 1
+          fi
+      - name: Build the DMG
+        run: npx electron-builder --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            desktop/release/*/siftr-*-arm64.dmg
+            desktop/release/*/siftr-*-arm64.dmg.blockmap
+          generate_release_notes: true
+          body: |
+            Find media by example — teach a tag with a folder of photos, then
+            search your whole library for more of the same thing.
+
+            ```
+            brew install --cask eddysant/tap/siftr
+            ```
+
+            > [!IMPORTANT]
+            > The build is unsigned, so macOS will say the app is *"damaged and
+            > can't be opened."* Clear the quarantine flag once after installing:
+            > ```
+            > xattr -cr /Applications/siftr.app
+            > ```
+
+            > [!NOTE]
+            > The app ships the UI only. Its Python service — CLIP and
+            > InsightFace — is installed separately, because torch alone would
+            > add ~590 MB to this download:
+            > ```
+            > pip install "siftr[ui,faces] @ git+https://github.com/eddysant/siftr"
+            > ```
+            > If siftr lives in a virtualenv, a packaged app will not inherit
+            > your shell PATH; point at it with
+            > `SIFTR_BIN=/path/to/.venv/bin/siftr open -a siftr`.

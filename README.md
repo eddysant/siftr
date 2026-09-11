@@ -32,17 +32,40 @@ answers queries against those stored vectors:
 ## Install
 
 ```bash
-pip install -e .
+brew install --cask eddysant/tap/siftr
+pip install "siftr[ui,faces] @ git+https://github.com/eddysant/siftr"
 ```
 
-Face recognition and faster video decoding are optional extras:
+Two steps because they are genuinely two things. The cask installs a 117 MB app;
+the engine pulls torch and InsightFace, which would add well over a gigabyte to
+that download. The app finds `siftr` on your `PATH` and starts it.
+
+siftr is not on PyPI, hence the git URL.
+
+The build is unsigned, so clear the quarantine flag once:
 
 ```bash
-pip install -e '.[faces,video]'
+xattr -cr /Applications/siftr.app
+```
+
+### Command line only
+
+If you do not want the app:
+
+```bash
+pip install "siftr[faces,video] @ git+https://github.com/eddysant/siftr"
 ```
 
 Without `video`, siftr shells out to `ffmpeg` for video frames. Without `faces`,
 everything works except people.
+
+### From source
+
+```bash
+git clone https://github.com/eddysant/siftr && cd siftr
+pip install -e '.[ui,faces,video]'
+cd desktop && npm install && npm run dev
+```
 
 ## Use
 
@@ -141,17 +164,16 @@ onto them, a photo can carry several tags at once, and matched tags are written
 into filenames.
 
 ```bash
-pip install -e '.[ui,faces]'      # the API the UI talks to
-cd desktop && npm install && npm run dev
+brew install --cask eddysant/tap/siftr
+pip install "siftr[ui,faces] @ git+https://github.com/eddysant/siftr"
 ```
 
-To build a real macOS app:
+To build it yourself:
 
 ```bash
 cd desktop && npm run dist        # -> release/0.1.0/siftr-<version>-arm64.dmg
 ```
 
-The build is unsigned, so Gatekeeper wants a right-click → Open the first time.
 It bundles the UI but **not** Python: torch alone is ~590 MB, which would turn a
 117 MB DMG into roughly 1.5 GB before a single model is downloaded. The app finds
 `siftr` on `PATH` instead. A packaged app does not inherit your shell `PATH`, so
