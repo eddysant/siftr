@@ -132,6 +132,10 @@ siftr search --person "Nadia"
 
 ### Finding duplicates
 
+The app has a **Duplicates** view with a strictness slider; drag it and watch the
+group count settle. How far apart duplicates land depends on your library, so the
+slider is how you find the right value rather than trusting a default.
+
 ```bash
 siftr duplicates                          # list groups
 siftr duplicates -o ~/review/dupes        # symlink the redundant copies for review
@@ -260,9 +264,17 @@ The toolbar has three modes, and the choice is stored with the library:
 | `move to tag folder` | Matches are filed into each tag's folder |
 | `leave files alone` | Tags live only in siftr's index |
 
-In move mode each tag gets a destination folder (click `→ choose folder…` on the
-tag). A file matching several tags can only live in one place, so the
-highest-scoring tag wins and the contested files are listed in the result.
+In move mode each tag gets two optional folders: one for its **matches** and one
+for **everything else**. Either or both — so a single pass can split a library
+("keepers → Keep, rest → Review"), or file only what matches and leave the rest
+alone. A file matching several tags can only live in one place, so the
+highest-scoring tag wins and contested files are listed in the result.
+
+Name collisions are resolved by looking at the content. If the destination
+already holds a byte-identical file, the move is skipped and reported rather than
+producing a second copy. Otherwise the file is disambiguated by the folder it
+came from — `IMG_0001 (Corfu 2023).jpg` — falling back to a counter when the
+folder name says nothing useful.
 
 Both modes journal to the same manifest, so `Undo` reverses either.
 

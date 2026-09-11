@@ -22,6 +22,14 @@ export interface FaceCluster {
     sample_path: string | null;
 }
 
+export interface DuplicateGroup {
+    kind: 'exact' | 'near';
+    distance: number;
+    keeper: string;
+    paths: string[];
+    redundant: string[];
+}
+
 export interface Tag {
     name: string;
     threshold: number;
@@ -29,6 +37,8 @@ export interface Tag {
     matches: number;
     /** Where matches are filed in move mode; null means they stay put. */
     destination: string | null;
+    /** Where files that do NOT match are filed. */
+    inverse_destination: string | null;
 }
 
 export type OrganizeMode = 'rename' | 'move' | 'off';

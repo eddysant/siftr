@@ -366,3 +366,73 @@ def test_keeper_demotes_names_that_advertise_being_a_copy(tmp_path, copy_name):
         {**row(duplicate), "mtime_ns": 1_000},
     ]
     assert group_exact(rows)[0].keeper.name == "IMG_1.png"
+
+
+def test_keeper_prefers_the_original_over_a_derived_edit(tmp_path):
+    """A brightened export is often the *larger* PNG, so size alone picks the
+    edit. The name says which came first: an edit extends the original's stem."""
+    original = tmp_path / "sunset.png"
+    photo(1, size=(800, 600)).save(original)
+    edit = tmp_path / "sunset_bright.png"
+    ImageEnhance.Brightness(photo(1, size=(800, 600))).enhance(1.12).save(edit)
+
+    rows = [row(original), row(edit)]
+    assert group_near(rows, distance=0.25)[0].keeper.name == "sunset.png"
+
+
+def test_unrelated_names_are_not_demoted(tmp_path):
+    """The prefix rule must stay quiet when the names have nothing to do with
+    each other, or it would pick arbitrarily."""
+    from siftr.duplicates import _derived_from_another
+
+    stems = ["IMG_0001", "Corfu sunset"]
+    assert not _derived_from_another("IMG_0001", stems)
+    assert not _derived_from_another("Corfu sunset", stems)
+
+
+def test_a_derived_name_is_recognised():
+    from siftr.duplicates import _derived_from_another
+
+    stems = ["sunset", "sunset_bright", "sunset_small"]
+    assert not _derived_from_another("sunset", stems)
+    assert _derived_from_another("sunset_bright", stems)
+    assert _derived_from_another("sunset_small", stems)
+
+
+def test_resolution_still_beats_the_name_rule(tmp_path):
+    """A high-res edit is still a better master than a low-res original.
+
+    Exercises the keeper rule directly: two renditions at different sizes do not
+    reliably group as near-duplicates anyway, and grouping is not what is under
+    test here.
+    """
+    from siftr.duplicates import _pick_keeper
+
+    small = tmp_path / "sunset.png"
+    photo(1, size=(200, 150)).save(small)
+    big = tmp_path / "sunset_bright.png"
+    photo(1, size=(800, 600)).save(big)
+
+    assert _pick_keeper([row(small), row(big)]).name == "sunset_bright.png"
+
+
+def test_derived_name_rule_outranks_plain_name_length(tmp_path):
+    """The case where the two rules disagree.
+
+    A shorter *filename* is only a proxy for "not derived from something else".
+    Here the derived copy has the shorter name — a short extension against a long
+    one — so name length alone would keep the edit. The prefix relationship
+    between the stems is the thing that actually says which came first.
+    """
+    from siftr.duplicates import _pick_keeper
+
+    original = tmp_path / "sunset.jpeg"  # 11 characters
+    photo(1, size=(400, 300)).save(original)
+    derived = tmp_path / "sunsetX.png"  # 11 characters, but stem extends "sunset"
+    photo(1, size=(400, 300)).save(derived)
+
+    rows = [
+        {**row(original), "size": 10, "mtime_ns": 1},
+        {**row(derived), "size": 999, "mtime_ns": 1},
+    ]
+    assert _pick_keeper(rows).name == "sunset.jpeg"

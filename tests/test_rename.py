@@ -68,7 +68,8 @@ def test_apply_never_overwrites_an_existing_file(tmp_path):
     apply_renames(plan_renames([(a, ["glaze"])], KNOWN))
 
     assert occupied.read_bytes() == b"other"
-    assert (tmp_path / "sub1" / "IMG [glaze]-2.jpg").read_bytes() == b"one"
+    # Disambiguated by the folder it came from, which says more than a counter.
+    assert (tmp_path / "sub1" / "IMG [glaze] (sub1).jpg").read_bytes() == b"one"
 
 
 def test_apply_resolves_collisions_within_one_batch(tmp_path):
@@ -83,7 +84,9 @@ def test_apply_resolves_collisions_within_one_batch(tmp_path):
     result = apply_renames(plans)
     assert result.count == 2
     names = sorted(p.name for p in tmp_path.glob("*.jpg"))
-    assert names == ["same-2.jpg", "same.jpg"]
+    # Both came from the same folder, so the folder name cannot separate them and
+    # the counter takes over for the second.
+    assert len(names) == 2 and "same.jpg" in names
 
 
 def test_apply_defers_a_rename_blocked_by_another(tmp_path):
@@ -134,7 +137,9 @@ def test_apply_does_not_clobber_a_broken_symlink(tmp_path):
     apply_renames(plan_renames([(src, ["glaze"])], KNOWN))
 
     assert link.is_symlink()
-    assert (tmp_path / "a [glaze]-2.jpg").read_bytes() == b"real"
+    # Not glob: "[glaze]" is a character class there, matching a single letter.
+    moved = [p for p in tmp_path.iterdir() if p.name.startswith("a [glaze]") and not p.is_symlink()]
+    assert len(moved) == 1 and moved[0].read_bytes() == b"real"
 
 
 # ---------------------------------------------------------- index consistency
@@ -154,6 +159,7 @@ def test_apply_updates_the_index_path(tmp_path):
 
 def test_index_path_follows_the_collision_suffixed_target(tmp_path):
     """The DB must record where the file actually went, not where it wanted to."""
+    tmp_path = tmp_path / "a-folder"
     src = touch(tmp_path / "IMG.jpg", b"one")
     touch(tmp_path / "IMG [glaze].jpg", b"other")
 
@@ -162,7 +168,7 @@ def test_index_path_follows_the_collision_suffixed_target(tmp_path):
         db.commit()
         apply_renames(plan_renames([(src, ["glaze"])], KNOWN), db=db)
         paths = [r["path"] for r in db.conn.execute("SELECT path FROM files")]
-        assert paths == [str(tmp_path / "IMG [glaze]-2.jpg")]
+        assert paths == [str(tmp_path / "IMG [glaze] (a-folder).jpg")]
 
 
 # ------------------------------------------------------------------ undo
@@ -265,3 +271,78 @@ def test_retag_and_rename_agree(tmp_path):
     expected = retag_name(src.name, ["glaze"], KNOWN)
     apply_renames(plan_renames([(src, ["glaze"])], KNOWN))
     assert (tmp_path / expected).exists()
+
+
+# ------------------------------------------------- smart collision handling
+
+
+def test_an_identical_file_already_there_is_not_copied_again(tmp_path):
+    """The case a counter gets wrong: it turns "already filed" into IMG-2.jpg."""
+    from siftr.rename import resolve_collision
+
+    source = touch(tmp_path / "from" / "IMG.jpg", b"same bytes")
+    touch(tmp_path / "to" / "IMG.jpg", b"same bytes")
+
+    assert resolve_collision(source, tmp_path / "to" / "IMG.jpg") is None
+
+
+def test_a_different_file_is_disambiguated_by_its_folder(tmp_path):
+    from siftr.rename import resolve_collision
+
+    source = touch(tmp_path / "Corfu 2023" / "IMG.jpg", b"mine")
+    touch(tmp_path / "to" / "IMG.jpg", b"theirs")
+
+    resolved = resolve_collision(source, tmp_path / "to" / "IMG.jpg")
+    assert resolved is not None
+    assert resolved.name == "IMG (Corfu 2023).jpg"
+
+
+def test_an_uninformative_folder_name_falls_back_to_a_counter(tmp_path):
+    """ "Photos" tells you nothing about which copy this is."""
+    from siftr.rename import resolve_collision
+
+    source = touch(tmp_path / "Photos" / "IMG.jpg", b"mine")
+    touch(tmp_path / "to" / "IMG.jpg", b"theirs")
+
+    resolved = resolve_collision(source, tmp_path / "to" / "IMG.jpg")
+    assert resolved.name == "IMG-2.jpg"
+
+
+def test_a_very_long_folder_name_is_not_borrowed(tmp_path):
+    from siftr.rename import resolve_collision
+
+    source = touch(tmp_path / ("x" * 60) / "IMG.jpg", b"mine")
+    touch(tmp_path / "to" / "IMG.jpg", b"theirs")
+    assert resolve_collision(source, tmp_path / "to" / "IMG.jpg").name == "IMG-2.jpg"
+
+
+def test_the_folder_suffix_is_used_only_once(tmp_path):
+    """A third file from the same folder still needs telling apart."""
+    from siftr.rename import resolve_collision
+
+    source = touch(tmp_path / "Corfu" / "IMG.jpg", b"mine")
+    touch(tmp_path / "to" / "IMG.jpg", b"a")
+    touch(tmp_path / "to" / "IMG (Corfu).jpg", b"b")
+
+    assert resolve_collision(source, tmp_path / "to" / "IMG.jpg").name == "IMG-2.jpg"
+
+
+def test_a_free_name_is_used_as_is(tmp_path):
+    from siftr.rename import resolve_collision
+
+    source = touch(tmp_path / "from" / "IMG.jpg")
+    target = tmp_path / "to" / "IMG.jpg"
+    assert resolve_collision(source, target) == target
+
+
+def test_already_filed_files_are_reported_not_counted_as_renamed(tmp_path):
+    from siftr.rename import RenamePlan
+
+    source = touch(tmp_path / "from" / "IMG.jpg", b"identical")
+    touch(tmp_path / "to" / "IMG.jpg", b"identical")
+
+    result = apply_renames([RenamePlan(source, tmp_path / "to" / "IMG.jpg")])
+
+    assert result.count == 0
+    assert result.already_filed == [source]
+    assert source.exists(), "the original is left alone, not deleted"

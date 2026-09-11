@@ -24,7 +24,7 @@ import numpy as np
 
 from .vectors import from_blob, to_blob
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -87,6 +87,10 @@ CREATE TABLE IF NOT EXISTS concepts (
     -- A phrase for open-vocabulary verification, e.g. "a tattooed arm". Needed
     -- because OWLv2's image-guided mode does not discriminate; see grounding.py.
     verify_phrase TEXT,
+    -- Where files that do NOT match this tag go. Splitting a library needs both
+    -- directions: "blurry -> Rejects" keeps the good ones where they are, while
+    -- "keepers -> Keep" wants everything else moved out.
+    inverse_destination TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -208,6 +212,7 @@ class Database:
         "concepts": [
             ("destination", "TEXT"),
             ("verify_phrase", "TEXT"),
+            ("inverse_destination", "TEXT"),
         ],
     }
 
@@ -421,10 +426,15 @@ class Database:
         )
         self.conn.commit()
 
-    def set_destination(self, name: str, destination: str | None) -> bool:
-        """Where this tag's matches are filed in move mode. None = stay put."""
+    def set_destination(self, name: str, destination: str | None, inverse: bool = False) -> bool:
+        """Where this tag files things in move mode. None = stay put.
+
+        ``inverse`` sets the destination for files that do *not* match, which is
+        the other half of splitting a library.
+        """
+        column = "inverse_destination" if inverse else "destination"
         cur = self.conn.execute(
-            "UPDATE concepts SET destination = ? WHERE name = ?",
+            f"UPDATE concepts SET {column} = ? WHERE name = ?",
             (str(Path(destination).expanduser()) if destination else None, name),
         )
         self.conn.commit()
@@ -437,12 +447,13 @@ class Database:
         self.conn.commit()
         return cur.rowcount > 0
 
-    def destinations(self) -> dict[str, str]:
-        """Tag name -> destination folder, for tags that have one."""
+    def destinations(self, inverse: bool = False) -> dict[str, str]:
+        """Tag name -> folder, for tags that have one set in that direction."""
+        column = "inverse_destination" if inverse else "destination"
         return {
-            r["name"]: r["destination"]
+            r["name"]: r[column]
             for r in self.conn.execute(
-                "SELECT name, destination FROM concepts WHERE destination IS NOT NULL"
+                f"SELECT name, {column} FROM concepts WHERE {column} IS NOT NULL"
             )
         }
 

@@ -1,5 +1,6 @@
 import type {
     BoundaryFile,
+    DuplicateGroup,
     FaceCluster,
     Job,
     MatchMode,
@@ -93,11 +94,21 @@ export const getSettings = () => call<{ organize_mode: OrganizeMode }>('GET', '/
 export const setOrganizeMode = (organize_mode: OrganizeMode) =>
     call<{ organize_mode: OrganizeMode }>('PUT', '/api/settings', { organize_mode });
 
-export const setDestination = (tag: string, destination: string | null) =>
-    call<{ name: string; destination: string | null }>(
+export const setDestination = (
+    tag: string,
+    destination: string | null,
+    inverse = false,
+) =>
+    call<{ name: string; destination: string | null; inverse: boolean }>(
         'PUT',
         `/api/tags/${encodeURIComponent(tag)}/destination`,
-        { destination },
+        { destination, inverse },
+    );
+
+export const getDuplicates = (distance?: number) =>
+    call<{ distance: number; groups: DuplicateGroup[]; redundant_total: number }>(
+        'GET',
+        `/api/duplicates${distance === undefined ? '' : `?distance=${distance}`}`,
     );
 
 export const organizeNow = (dryRun = false) =>

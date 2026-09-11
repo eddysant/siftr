@@ -107,6 +107,8 @@ try:
 
     class DestinationBody(BaseModel):
         destination: str | None = None
+        #: Set the folder for files that do NOT match, rather than those that do.
+        inverse: bool = False
 
     class OverrideBody(BaseModel):
         path: str
@@ -218,6 +220,7 @@ def create_app(db_path: Path | None = None, token: str | None = None):
                         "examples": int(row["n_examples"]),
                         "matches": int(row["n_matches"]),
                         "destination": row["destination"],
+                        "inverse_destination": row["inverse_destination"],
                     }
                     for row in db.list_concepts()
                 ]
@@ -536,9 +539,13 @@ def create_app(db_path: Path | None = None, token: str | None = None):
             # other folder siftr touches.
             app.state.allowlist.assert_permits(Path(body.destination))
         with open_db() as db:
-            if not db.set_destination(name, body.destination):
+            if not db.set_destination(name, body.destination, body.inverse):
                 raise HTTPException(status_code=404, detail=f"no such tag: {name}")
-            return {"name": name, "destination": body.destination}
+            return {
+                "name": name,
+                "destination": body.destination,
+                "inverse": body.inverse,
+            }
 
     @app.post("/api/organize", dependencies=guard)
     def organize_now(dry_run: bool = Query(default=False)) -> dict:

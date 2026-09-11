@@ -47,6 +47,10 @@ class RenamePlan:
 class RenameResult:
     applied: list[tuple[Path, Path]] = field(default_factory=list)
     skipped: int = 0
+    #: Files whose destination already held byte-identical content. Not an error
+    #: and not a rename — worth reporting separately so "nothing happened" can be
+    #: distinguished from "it was already done".
+    already_filed: list[Path] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
     @property
@@ -72,6 +76,7 @@ def plan_moves(
     tagged: Iterable[tuple[Path, Sequence[str]]],
     destinations: dict[str, str],
     scores: dict[Path, dict[str, float]] | None = None,
+    inverse_destinations: dict[str, str] | None = None,
 ) -> tuple[list[RenamePlan], list[str]]:
     """Work out where tagged files should be filed.
 
@@ -86,11 +91,26 @@ def plan_moves(
     """
     plans: list[RenamePlan] = []
     contested: list[str] = []
+    inverse_destinations = inverse_destinations or {}
 
     for path, tags in tagged:
         path = Path(path)
         claiming = sorted(t for t in tags if destinations.get(t))
+
         if not claiming:
+            # No tag claims it as a match. A tag may still claim it for *not*
+            # matching, which is how "move everything that is not a keeper" works.
+            rejecting = sorted(t for t in inverse_destinations if t not in tags)
+            if not rejecting:
+                continue
+            target_dir = Path(inverse_destinations[rejecting[0]]).expanduser()
+            if len(rejecting) > 1:
+                contested.append(
+                    f"{path.name}: not {', '.join(rejecting)}; filed under not-{rejecting[0]}"
+                )
+            if _already_filed(path, target_dir):
+                continue
+            plans.append(RenamePlan(path, target_dir / path.name))
             continue
 
         if len(claiming) > 1:
@@ -132,8 +152,100 @@ def _exists(path: Path) -> bool:
     return True
 
 
+#: Folder names that say nothing about which copy is which, so they are not worth
+#: borrowing to disambiguate a filename.
+_UNHELPFUL_PARENTS = {
+    "",
+    ".",
+    "/",
+    "photos",
+    "pictures",
+    "images",
+    "media",
+    "downloads",
+    "desktop",
+    "documents",
+    "camera roll",
+    "dcim",
+    "export",
+    "exports",
+    "untitled",
+    "new folder",
+    "temp",
+    "tmp",
+}
+
+
+def _same_file_content(a: Path, b: Path) -> bool:
+    """Whether two paths hold identical bytes.
+
+    Size is checked first because it settles almost every case for free; hashing
+    a pair of 4 GB videos to discover they differ would be its own bug.
+    """
+    try:
+        if a.stat().st_size != b.stat().st_size:
+            return False
+    except OSError:
+        return False
+    from .duplicates import content_hash
+
+    try:
+        return content_hash(a) == content_hash(b)
+    except OSError:
+        return False
+
+
+def _disambiguator(source: Path) -> str | None:
+    """Something meaningful to tell this copy apart from one already filed.
+
+    The folder it came from, when that name carries information. Two files called
+    `IMG_0001.jpg` are usually distinguished by where they were — `IMG_0001
+    (Corfu 2023).jpg` says which one it is, where `IMG_0001-2.jpg` says only that
+    there was a collision.
+    """
+    parent = source.parent.name.strip()
+    if parent.casefold() in _UNHELPFUL_PARENTS or len(parent) > 40:
+        return None
+    return parent
+
+
+def resolve_collision(source: Path, target: Path, claimed: set[Path] | None = None) -> Path | None:
+    """Where ``source`` should actually go, given ``target`` may be taken.
+
+    Returns ``None`` when the file is already filed — the name is taken by
+    byte-identical content, so moving it would create a second copy of something
+    that is already there. That is the case a plain counter gets wrong: it
+    silently turns "this is already here" into `IMG_1-2.jpg`.
+
+    Otherwise disambiguates with the source's folder name where that means
+    something, falling back to a counter.
+    """
+    claimed = claimed or set()
+
+    if not _exists(target) and target not in claimed:
+        return target
+
+    if _exists(target) and source != target and _same_file_content(source, target):
+        return None
+
+    stem, suffix = target.stem, target.suffix
+    hint = _disambiguator(source)
+    if hint:
+        candidate = target.with_name(f"{stem} ({hint}){suffix}")
+        if not _exists(candidate) and candidate not in claimed:
+            return candidate
+
+    counter = 2
+    while True:
+        candidate = target.with_name(f"{stem}-{counter}{suffix}")
+        if not _exists(candidate) and candidate not in claimed:
+            return candidate
+        counter += 1
+
+
 def _free_target(target: Path, claimed: set[Path]) -> Path:
-    """A target name that is free on disk and not already claimed this batch."""
+    """A free name for ``target``, counter-suffixed. Used where there is no
+    source to borrow a folder name from."""
     if not _exists(target) and target not in claimed:
         return target
     stem, suffix = target.stem, target.suffix
@@ -178,7 +290,13 @@ def apply_renames(
         for plan in ready:
             target = plan.target
             if not plan.is_case_only:
-                target = _free_target(target, claimed)
+                resolved = resolve_collision(plan.source, target, claimed)
+                if resolved is None:
+                    # Already filed: the name is taken by identical content.
+                    result.skipped += 1
+                    result.already_filed.append(plan.source)
+                    continue
+                target = resolved
 
             if dry_run:
                 claimed.add(target)

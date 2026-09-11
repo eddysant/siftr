@@ -195,6 +195,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_dupes.add_argument("--dry-run", action="store_true")
 
+    p_dest = sub.add_parser(
+        "destination", parents=[common], help="where a tag files things in move mode"
+    )
+    p_dest.add_argument("name")
+    p_dest.add_argument("folder", nargs="?", default=None, help="omit to clear")
+    p_dest.add_argument(
+        "--not-matching",
+        action="store_true",
+        help="set the folder for files that do NOT match this tag",
+    )
+
     p_serve = sub.add_parser(
         "serve", parents=[common], help="run the local API that backs the desktop UI"
     )
@@ -235,6 +246,7 @@ def _dispatch(args, db: Database, say) -> int:
         "people": _cmd_people,
         "status": _cmd_status,
         "forget": _cmd_forget,
+        "destination": _cmd_destination,
         "duplicates": _cmd_duplicates,
         "verify": _cmd_verify,
         "rematch": _cmd_rematch,
@@ -478,6 +490,19 @@ def _cmd_verify(args, db: Database, say) -> int:
     print(f"\n{'verified':>8}  {'clip':>6}  file")
     for row in results:
         print(f"{row['verified']:>8.3f}  {row['clip']:>6.3f}  {row['path']}")
+    return 0
+
+
+def _cmd_destination(args, db: Database, say) -> int:
+    if not db.set_destination(args.name, args.folder, args.not_matching):
+        print(f"error: no such tag: {args.name}", file=sys.stderr)
+        return 1
+    which = "files NOT matching" if args.not_matching else "matches"
+    say(
+        f"{which} '{args.name}' -> {args.folder}"
+        if args.folder
+        else f"cleared the {'inverse ' if args.not_matching else ''}destination for '{args.name}'"
+    )
     return 0
 
 

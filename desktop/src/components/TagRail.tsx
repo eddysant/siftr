@@ -18,7 +18,7 @@ interface Props {
     onDropNewTag: (paths: string[]) => void;
     onDropNewPerson: (paths: string[]) => void;
     organizeMode: OrganizeMode;
-    onSetDestination: (tag: string) => void;
+    onSetDestination: (tag: string, inverse: boolean) => void;
     onReviewTag: (tag: string) => void;
     onForgetTag: (name: string) => void;
     onForgetPerson: (name: string) => void;
@@ -147,21 +147,40 @@ export function TagRail(props: Props) {
                                 </button>
                             </div>
                             {organizeMode === 'move' && (
-                                <button
-                                    type="button"
-                                    className={`tag-dest ${tag.destination ? '' : 'unset'}`}
-                                    onClick={() => onSetDestination(tag.name)}
-                                    disabled={busy}
-                                    title={
-                                        tag.destination
-                                            ? `Matches are filed in ${tag.destination}`
-                                            : 'Choose where matches are filed'
-                                    }
-                                >
-                                    {tag.destination
-                                        ? `→ ${tag.destination.split('/').pop()}`
-                                        : '→ choose folder…'}
-                                </button>
+                                <>
+                                    <button
+                                        type="button"
+                                        className={`tag-dest ${tag.destination ? '' : 'unset'}`}
+                                        onClick={() => onSetDestination(tag.name, false)}
+                                        disabled={busy}
+                                        title={
+                                            tag.destination
+                                                ? `Matches are filed in ${tag.destination}`
+                                                : 'Choose where matches are filed'
+                                        }
+                                    >
+                                        {tag.destination
+                                            ? `matches → ${tag.destination.split('/').pop()}`
+                                            : 'matches → choose folder…'}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className={`tag-dest inverse ${
+                                            tag.inverse_destination ? '' : 'unset'
+                                        }`}
+                                        onClick={() => onSetDestination(tag.name, true)}
+                                        disabled={busy}
+                                        title={
+                                            tag.inverse_destination
+                                                ? `Non-matches are filed in ${tag.inverse_destination}`
+                                                : 'Choose where everything else is filed'
+                                        }
+                                    >
+                                        {tag.inverse_destination
+                                            ? `rest → ${tag.inverse_destination.split('/').pop()}`
+                                            : 'rest → choose folder…'}
+                                    </button>
+                                </>
                             )}
                             {active && (
                                 <div className="drop-hint">

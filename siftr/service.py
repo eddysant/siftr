@@ -434,7 +434,8 @@ def organize(
         plans = plan_renames(tagged, known)
     else:
         destinations = db.destinations()
-        if not destinations:
+        inverse = db.destinations(inverse=True)
+        if not destinations and not inverse:
             return {
                 "mode": mode,
                 "changed": 0,
@@ -442,13 +443,14 @@ def organize(
                 "errors": ["no tag has a destination folder set"],
                 "changes": [],
             }
-        plans, notes = plan_moves(tagged, destinations, scores)
+        plans, notes = plan_moves(tagged, destinations, scores, inverse)
 
     result = apply_renames(plans, db=db, root=root, dry_run=dry_run)
     return {
         "mode": mode,
         "changed": result.count,
         "skipped": result.skipped,
+        "already_filed": len(result.already_filed),
         "errors": [*result.errors, *notes],
         "paired": sum(1 for g in groups if g.is_paired),
         "changes": [[str(a), str(b)] for a, b in result.applied[:200]],

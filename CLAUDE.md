@@ -84,16 +84,25 @@ questions — "same subject" versus "same photograph".
 - **Exact duplicates are found separately**, by BLAKE2b over the file bytes.
   Someone may delete based on this, and a hash collision story is not worth
   telling when certainty is free.
-- **The keeper heuristic is resolution, then bytes, then the name.** A compressed
-  12 MP frame beats a lossless 800px export of it. When copies are identical only
-  the name can decide, so names advertising themselves as copies ("copy", "(1)",
-  "-2") lose before modification time is consulted — mtime sounds authoritative
-  but some copy tools preserve it and others reset it.
+- **The keeper heuristic is resolution, then the name, then bytes.** A compressed
+  12 MP frame beats a lossless 800px export of it. But name beats size at equal
+  resolution, learned from a live run: a brightened PNG export is often the
+  *larger* file, so size alone kept the edit over the original. Names
+  advertising themselves as copies lose first, then names that extend another
+  name in the group (`sunset_bright` derives from `sunset`), which is a more
+  direct statement of "this one came second" than a shorter filename — and mtime
+  comes last, because some copy tools preserve it and others reset it.
 - **All-pairs Hamming, chunked.** ~47s over 50k x 256-bit hashes with
   `np.bitwise_count`, peak temporary a few hundred MB. An LSH or BK-tree index is
   what this wants an order of magnitude beyond that.
 - Hashes are computed on the indexing worker threads, where they are free next to
   the model work, and stored on `files` (schema v6).
+- **`DEFAULT_DISTANCE` is a starting point, not a constant of nature.** Measured
+  across two fixtures, resize-and-recompress variants sat at 0.8% of bits in one
+  and 13% in another — per-pixel noise survives resizing differently. Unrelated
+  photos stayed above 45% in both, so the gap is always there; the UI's
+  strictness slider is how a user finds where theirs is, and its range goes well
+  past the default for that reason.
 
 ## What tagging is good and bad at
 
@@ -274,9 +283,20 @@ rename manifest, so one undo covers either.
   the directory, so an `.AAE` siftr does not embed is still moved with its photo.
 - **A bucket of only sidecars is skipped** rather than having a primary invented
   for it.
+- **Move mode files in both directions.** A tag has a `destination` for its
+  matches and an `inverse_destination` for everything else, either or both. One
+  pass can split a library — "keepers -> Keep, rest -> Review" — which a
+  matches-only rule cannot express.
 - **Move mode: highest-scoring claiming tag wins**, ties broken alphabetically so
   the result does not depend on dict ordering. Contested files are reported, not
   silently filed.
+- **A name collision is resolved by content first** (`rename.resolve_collision`).
+  If the destination already holds byte-identical content the move is skipped
+  entirely and reported as `already_filed` — a counter would turn "this is
+  already here" into `IMG_1-2.jpg`. Otherwise the source's folder name
+  disambiguates (`IMG_0001 (Corfu 2023).jpg`), because that says which copy this
+  is where a counter says only that there was a collision. Folder names carrying
+  no information ("Photos", "Downloads", "tmp") fall back to the counter.
 - **`shutil.move` on EXDEV**: a destination on another volume cannot be reached
   by `os.rename`.
 - **`save_concept` must not clear `destination`** — re-teaching a tag replaces
@@ -345,6 +365,8 @@ renderer never holds it.
 | `src/components/Grid.tsx` | windowed thumbnail grid, drag source, tag chips |
 | `electron/menu.ts` | application menu; `menuTemplate()` is pure data so it can be tested |
 | `build/make-icon.py` | draws `icon.png` + `icon.icns` — run it to change the mark |
+| `src/components/Duplicates.tsx` | duplicate groups with a live strictness slider |
+| `src/components/BoundaryReview.tsx` | confirm/reject the files a tag is least sure about |
 | `src/filter.ts` | pure ANY/ALL filtering, tested without rendering |
 
 ### Desktop gotchas

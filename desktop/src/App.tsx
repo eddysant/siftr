@@ -3,6 +3,7 @@ import * as api from './api';
 import { Grid } from './components/Grid';
 import { NamePrompt } from './components/NamePrompt';
 import { BoundaryReview } from './components/BoundaryReview';
+import { Duplicates } from './components/Duplicates';
 import { TagRail } from './components/TagRail';
 import { filterFiles, tagCounts, toggleTag } from './filter';
 import type {
@@ -42,6 +43,7 @@ export default function App() {
     const [organizeMode, setOrganizeMode] = useState<OrganizeMode>('rename');
     const [prompt, setPrompt] = useState<Pending>(null);
     const [reviewing, setReviewing] = useState<string | null>(null);
+    const [showDuplicates, setShowDuplicates] = useState(false);
     const [status, setStatus] = useState('');
     const [error, setError] = useState<string | null>(null);
     // Kept separate from `error`: when the Python service never started, every
@@ -237,12 +239,16 @@ export default function App() {
         }
     };
 
-    const chooseDestination = async (tag: string) => {
+    const chooseDestination = async (tag: string, inverse: boolean) => {
         const folder = await window.api.chooseFolder();
         if (!folder) return;
         try {
-            await api.setDestination(tag, folder);
-            setStatus(`“${tag}” files into ${folder}`);
+            await api.setDestination(tag, folder, inverse);
+            setStatus(
+                inverse
+                    ? `anything that is not “${tag}” files into ${folder}`
+                    : `“${tag}” files into ${folder}`,
+            );
             await refresh();
         } catch (err) {
             setError(String(err));
@@ -318,6 +324,14 @@ export default function App() {
                         <option value="off">leave files alone</option>
                     </select>
                 </label>
+                <button
+                    type="button"
+                    onClick={() => setShowDuplicates(true)}
+                    disabled={busy || !files.length}
+                    title="Find duplicate and near-duplicate files"
+                >
+                    Duplicates
+                </button>
                 <button type="button" onClick={undo} disabled={busy || !roots.length}>
                     Undo
                 </button>
@@ -449,6 +463,8 @@ export default function App() {
                     onReveal={(path) => window.api.revealInFinder(path)}
                 />
             </div>
+
+            {showDuplicates && <Duplicates onClose={() => setShowDuplicates(false)} />}
 
             {reviewing && (
                 <BoundaryReview

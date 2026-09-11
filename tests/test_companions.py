@@ -230,7 +230,8 @@ def test_move_does_not_overwrite_a_name_already_there(tmp_path):
     plans, _ = plan_moves([(photo, ["beach"])], {"beach": str(tmp_path / "Beach")})
     apply_renames(plans)
     assert (tmp_path / "Beach" / "a.jpg").read_bytes() == b"existing"
-    assert (tmp_path / "Beach" / "a-2.jpg").read_bytes() == b"incoming"
+    incoming = [p for p in (tmp_path / "Beach").glob("a*.jpg") if p.name != "a.jpg"]
+    assert len(incoming) == 1 and incoming[0].read_bytes() == b"incoming"
 
 
 # ------------------------------------------------------------ organize modes
@@ -330,4 +331,89 @@ def test_clearing_a_destination(tmp_path):
     db.set_destination("beach", "/tmp/Beach")
     db.set_destination("beach", None)
     assert db.destinations() == {}
+    db.close()
+
+
+# ------------------------------------------------ moving non-matches
+
+
+def test_non_matches_can_be_filed_too(tmp_path):
+    """Splitting a library needs both directions: "blurry -> Rejects" leaves the
+    good ones alone, "keepers -> Keep" wants everything else moved out."""
+    keeper = touch(tmp_path / "a.jpg")
+    other = touch(tmp_path / "b.jpg")
+
+    plans, _ = plan_moves(
+        [(keeper, ["keeper"]), (other, [])],
+        {},
+        inverse_destinations={"keeper": str(tmp_path / "Review")},
+    )
+
+    assert [p.source.name for p in plans] == ["b.jpg"]
+    assert plans[0].target.parent.name == "Review"
+
+
+def test_both_directions_at_once(tmp_path):
+    match = touch(tmp_path / "a.jpg")
+    other = touch(tmp_path / "b.jpg")
+
+    plans, _ = plan_moves(
+        [(match, ["keeper"]), (other, [])],
+        {"keeper": str(tmp_path / "Keep")},
+        inverse_destinations={"keeper": str(tmp_path / "Reject")},
+    )
+
+    by_source = {p.source.name: p.target.parent.name for p in plans}
+    assert by_source == {"a.jpg": "Keep", "b.jpg": "Reject"}
+
+
+def test_a_match_is_never_filed_by_the_inverse_rule(tmp_path):
+    match = touch(tmp_path / "a.jpg")
+    plans, _ = plan_moves(
+        [(match, ["keeper"])], {}, inverse_destinations={"keeper": str(tmp_path / "Review")}
+    )
+    assert plans == [], "it matches, so the not-matching folder does not apply"
+
+
+def test_inverse_contests_are_reported(tmp_path):
+    other = touch(tmp_path / "b.jpg")
+    _plans, contested = plan_moves(
+        [(other, [])],
+        {},
+        inverse_destinations={"zebra": str(tmp_path / "Z"), "alpha": str(tmp_path / "A")},
+    )
+    assert contested and "not-alpha" in contested[0]
+
+
+def test_files_already_in_the_inverse_folder_stay(tmp_path):
+    already = touch(tmp_path / "Review" / "b.jpg")
+    plans, _ = plan_moves(
+        [(already, [])], {}, inverse_destinations={"keeper": str(tmp_path / "Review")}
+    )
+    assert plans == []
+
+
+def test_organize_move_files_non_matches(tmp_path):
+    db, still, _motion = _library(tmp_path)
+    # 'beach' matches the pair; a second file matches nothing.
+    stray = touch(tmp_path / "lib" / "stray.jpg")
+    db.upsert_file(stray, "image", 1, 1)
+    db.commit()
+    db.set_destination("beach", str(tmp_path / "NotBeach"), inverse=True)
+
+    out = organize(db, mode="move", root=tmp_path)
+
+    assert out["changed"] == 1
+    assert (tmp_path / "NotBeach" / "stray.jpg").exists()
+    assert still.exists(), "matches stay put when only the inverse folder is set"
+    db.close()
+
+
+def test_inverse_destination_round_trips(tmp_path):
+    db = Database(tmp_path / "i.db")
+    db.save_concept("beach", _vec(1), 0.5, 3)
+    db.set_destination("beach", "/tmp/Beach")
+    db.set_destination("beach", "/tmp/NotBeach", inverse=True)
+    assert db.destinations() == {"beach": "/tmp/Beach"}
+    assert db.destinations(inverse=True) == {"beach": "/tmp/NotBeach"}
     db.close()

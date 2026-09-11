@@ -132,6 +132,19 @@ def _looks_like_a_copy(name: str) -> bool:
     return any(pattern.search(stem) for pattern in _COPY_MARKERS)
 
 
+def _derived_from_another(stem: str, others: list[str]) -> bool:
+    """Whether this name looks derived from another in the same group.
+
+    `sunset_bright.png` and `sunset_small.png` both extend `sunset.png`; an edit
+    or an export keeps the original stem and adds to it, so a stem that strictly
+    contains another group member's stem is very likely the derived copy. This
+    catches edit suffixes without needing a list of what people call them, and it
+    stays quiet when the names are unrelated — `IMG_0001` and `Corfu sunset` have
+    no prefix relationship, so neither is demoted and the other rules decide.
+    """
+    return any(other != stem and stem.startswith(other) for other in others)
+
+
 def _pick_keeper(rows: list[dict]) -> Path:
     """Choose the copy worth keeping.
 
@@ -139,19 +152,21 @@ def _pick_keeper(rows: list[dict]) -> Path:
     master than a lossless 800px export of it, and the larger *file* is often the
     worse one. Then bytes, as a proxy for encoding quality at equal resolution.
 
-    The tiebreaks decide the common case, where every copy is identical and only
-    the name differs. A name advertising itself as a copy loses first, then the
-    shorter name, then the older file, then the path — so ``original.png`` beats
-    ``original copy.png`` regardless of which the filesystem happened to touch
-    last.
+    At equal resolution the name decides, and it decides before file size: a
+    brightened export of a PNG is often the *larger* file, so size would pick the
+    edit over the original. So a name that advertises itself as a copy loses
+    first, then one that looks derived from another name in the group, then the
+    longer name, and only then size, age and path.
     """
+    stems = [Path(r["path"]).stem for r in rows]
     best = min(
         rows,
         key=lambda r: (
             -(r.get("pixels") or 0),
-            -(r.get("size") or 0),
             _looks_like_a_copy(r["path"]),
+            _derived_from_another(Path(r["path"]).stem, stems),
             len(Path(r["path"]).name),
+            -(r.get("size") or 0),
             r.get("mtime_ns") or 0,
             str(r["path"]),
         ),
