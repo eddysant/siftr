@@ -33,14 +33,11 @@ answers queries against those stored vectors:
 
 ```bash
 brew install --cask eddysant/tap/siftr
-pip install "siftr[ui,faces] @ git+https://github.com/eddysant/siftr"
 ```
 
-Two steps because they are genuinely two things. The cask installs a 117 MB app;
-the engine pulls torch and InsightFace, which would add well over a gigabyte to
-that download. The app finds `siftr` on your `PATH` and starts it.
-
-siftr is not on PyPI, hence the git URL.
+That is everything: the cask depends on the `siftr` formula, which installs the
+engine (CLIP and face recognition, ~1.2 GB) alongside the app. The app finds it
+on `PATH` and starts it. Models download on first use, not at install.
 
 The build is unsigned, so clear the quarantine flag once:
 
@@ -53,7 +50,7 @@ xattr -cr /Applications/siftr.app
 If you do not want the app:
 
 ```bash
-pip install "siftr[faces,video] @ git+https://github.com/eddysant/siftr"
+brew install eddysant/tap/siftr
 ```
 
 Without `video`, siftr shells out to `ffmpeg` for video frames. Without `faces`,
@@ -165,7 +162,6 @@ into filenames.
 
 ```bash
 brew install --cask eddysant/tap/siftr
-pip install "siftr[ui,faces] @ git+https://github.com/eddysant/siftr"
 ```
 
 To build it yourself:
