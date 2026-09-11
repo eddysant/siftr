@@ -16,8 +16,8 @@ __pycache__/
 .venv/
 venv/
 *.egg-info/
-dist/
-build/
+/dist/
+/build/
 .pytest_cache/
 .ruff_cache/
 
@@ -29,5 +29,6 @@ desktop/node_modules/
 desktop/dist/
 desktop/dist-electron/
 desktop/release/
+desktop/build/icon.iconset/
 desktop/resources/python/*
 !desktop/resources/python/README.md
