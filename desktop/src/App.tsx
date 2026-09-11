@@ -81,6 +81,43 @@ export default function App() {
         void refresh();
     }, [refresh]);
 
+    useEffect(() => {
+        // The menu drives the same handlers as the toolbar rather than
+        // duplicating their logic in the main process.
+        window.api.onMenuAction((action) => {
+            switch (action) {
+                case 'open-folder':
+                    void openFolder();
+                    break;
+                case 'rescore':
+                    void score();
+                    break;
+                case 'organize':
+                    void applyOrganize();
+                    break;
+                case 'undo-changes':
+                    void undo();
+                    break;
+                case 'reveal':
+                    for (const path of chosen) void window.api.revealInFinder(path);
+                    break;
+                case 'clear-selection':
+                    setChosen(new Set());
+                    break;
+                case 'mode-rename':
+                    void changeMode('rename');
+                    break;
+                case 'mode-move':
+                    void changeMode('move');
+                    break;
+                case 'mode-off':
+                    void changeMode('off');
+                    break;
+            }
+        });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [chosen, organizeMode, tags.length, roots.length]);
+
     const run = useCallback(
         async (start: () => Promise<Job>, label: string) => {
             setError(null);
@@ -204,6 +241,24 @@ export default function App() {
         try {
             await api.setDestination(tag, folder);
             setStatus(`“${tag}” files into ${folder}`);
+            await refresh();
+        } catch (err) {
+            setError(String(err));
+        }
+    };
+
+    const applyOrganize = async () => {
+        setError(null);
+        try {
+            const result = await api.organizeNow();
+            const verb = result.mode === 'move' ? 'filed' : 'renamed';
+            setStatus(
+                result.changed
+                    ? `${verb} ${result.changed} file${result.changed === 1 ? '' : 's'}` +
+                          (result.paired ? ` (${result.paired} paired group(s) kept together)` : '')
+                    : 'nothing to change',
+            );
+            if (result.errors.length) setError(result.errors.join('\n'));
             await refresh();
         } catch (err) {
             setError(String(err));

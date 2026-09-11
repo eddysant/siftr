@@ -133,6 +133,8 @@ renderer never holds it.
 | `src/App.tsx` | state, job polling, teach/score/undo orchestration |
 | `src/components/TagRail.tsx` | tags as drop targets, ANY/ALL toggle |
 | `src/components/Grid.tsx` | windowed thumbnail grid, drag source, tag chips |
+| `electron/menu.ts` | application menu; `menuTemplate()` is pure data so it can be tested |
+| `build/make-icon.py` | draws `icon.png` + `icon.icns` — run it to change the mark |
 | `src/filter.ts` | pure ANY/ALL filtering, tested without rendering |
 
 ### Desktop gotchas
@@ -159,6 +161,17 @@ renderer never holds it.
   earlier session made every thumbnail 403.
 - **`webUtils.getPathForFile`** resolves dropped files; `File.path` was removed
   in Electron 32+ and it must be called from the preload.
+- **Menu items dispatch to the renderer over `menu:action`** rather than acting
+  in main. The renderer already owns library state; duplicating it would mean two
+  definitions of what "Re-score" does. `menuTemplate()` is separated from
+  `Menu.setApplicationMenu` so its shape is unit-testable — a menu that silently
+  drops an item is otherwise only discoverable by opening it.
+- **The icon is drawn, not sourced** (`build/make-icon.py`): filled polygons
+  rather than thick strokes, because stroked diagonals leave mitre artifacts
+  where they meet and the mark has to survive down to 16px. Re-run the script
+  after editing it; it emits both the PNG and the `.icns`.
+- **`vite.config.ts` derives `__dirname` from `import.meta.url`.** Vite's native
+  config loader, due to become the default, does not provide `__dirname`.
 
 ## Testing
 

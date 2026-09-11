@@ -55,6 +55,7 @@ declare global {
             revealInFinder(path: string): Promise<void>;
             pathsForFiles(files: File[]): string[];
             onServiceError(handler: (message: string) => void): void;
+            onMenuAction(handler: (action: string) => void): void;
         };
     }
 }

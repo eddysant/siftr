@@ -28,4 +28,8 @@ contextBridge.exposeInMainWorld('api', {
 
     onServiceError: (handler: (message: string) => void) =>
         ipcRenderer.on('siftr:service-error', (_event, message: string) => handler(message)),
+
+    /** Menu items act on library state, which only the renderer holds. */
+    onMenuAction: (handler: (action: string) => void) =>
+        ipcRenderer.on('menu:action', (_event, action: string) => handler(action)),
 });

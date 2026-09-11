@@ -1,5 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, shell } from 'electron';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
+import { buildApplicationMenu, configureAboutPanel } from './menu';
 import { fileURLToPath } from 'node:url';
 import {
     resolveServiceCommand,
@@ -86,6 +88,7 @@ function createWindow(): void {
         minWidth: 900,
         minHeight: 600,
         backgroundColor: '#14131a',
+        icon: path.join(__dirname, '..', 'build', 'icon.png'),
         titleBarStyle: 'hiddenInset',
         webPreferences: {
             preload: path.join(__dirname, 'preload.mjs'),
@@ -148,6 +151,17 @@ ipcMain.handle('dialog:openDirectory', async () => {
 ipcMain.handle('shell:reveal', (_event, target: string) => shell.showItemInFolder(target));
 
 app.whenReady().then(async () => {
+    configureAboutPanel();
+    buildApplicationMenu();
+
+    // In development the app runs under the Electron binary, whose bundle owns
+    // the Dock icon; setting it explicitly makes `npm run dev` show siftr's icon
+    // instead of Electron's. A packaged build gets it from the bundle already.
+    if (DEV_URL && process.platform === 'darwin') {
+        const devIcon = path.join(__dirname, '..', 'build', 'icon.png');
+        if (existsSync(devIcon)) app.dock?.setIcon(devIcon);
+    }
+
     try {
         service = await startPythonService(SERVICE_PORT, resolveServiceCommand(process.resourcesPath));
         registerThumbProtocol(service);

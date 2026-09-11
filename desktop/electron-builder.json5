@@ -2,7 +2,7 @@
   appId: "dev.eddysant.siftr",
   productName: "siftr",
   directories: { output: "release/${version}" },
-  files: ["dist/**/*", "dist-electron/**/*"],
+  files: ["dist/**/*", "dist-electron/**/*", "build/icon.png"],
   /**
    * A vendored Python interpreter is picked up from resources/python when one is
    * present (see scripts/vendor-python.sh). It is not built by default: torch
@@ -13,6 +13,7 @@
     { from: "resources/python", to: "python", filter: ["**/*"] }
   ],
   mac: {
+    icon: "build/icon.icns",
     category: "public.app-category.photography",
     target: [{ target: "dmg", arch: ["arm64"] }],
     // Unsigned: this is a personal build. Gatekeeper will need a right-click →
