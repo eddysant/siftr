@@ -1,4 +1,12 @@
-import type { FaceCluster, Job, MatchMode, MediaFile, Person, Tag } from './types';
+import type {
+    FaceCluster,
+    Job,
+    MatchMode,
+    MediaFile,
+    OrganizeMode,
+    Person,
+    Tag,
+} from './types';
 
 /**
  * Every call goes through main over IPC rather than fetch(), so the bearer token
@@ -65,6 +73,27 @@ export const nameCluster = (name: string, faceIds: number[]) =>
         name,
         face_ids: faceIds,
     });
+
+export const getSettings = () => call<{ organize_mode: OrganizeMode }>('GET', '/api/settings');
+
+export const setOrganizeMode = (organize_mode: OrganizeMode) =>
+    call<{ organize_mode: OrganizeMode }>('PUT', '/api/settings', { organize_mode });
+
+export const setDestination = (tag: string, destination: string | null) =>
+    call<{ name: string; destination: string | null }>(
+        'PUT',
+        `/api/tags/${encodeURIComponent(tag)}/destination`,
+        { destination },
+    );
+
+export const organizeNow = (dryRun = false) =>
+    call<{
+        mode: OrganizeMode;
+        changed: number;
+        skipped: number;
+        paired?: number;
+        errors: string[];
+    }>('POST', `/api/organize?dry_run=${dryRun}`);
 
 export const pendingRenames = () =>
     call<{ pending: number; changes: string[][] }>('GET', '/api/renames/pending');

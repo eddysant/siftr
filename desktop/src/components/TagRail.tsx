@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { isNegativeDrop, pathsFromDrop } from '../drop';
-import type { FaceCluster, MatchMode, Person, Tag } from '../types';
+import type { FaceCluster, MatchMode, OrganizeMode, Person, Tag } from '../types';
 
 interface Props {
     tags: Tag[];
@@ -17,6 +17,8 @@ interface Props {
     onDropOnTag: (tagName: string, paths: string[], negative: boolean) => void;
     onDropNewTag: (paths: string[]) => void;
     onDropNewPerson: (paths: string[]) => void;
+    organizeMode: OrganizeMode;
+    onSetDestination: (tag: string) => void;
     onForgetTag: (name: string) => void;
     onForgetPerson: (name: string) => void;
     onNameCluster: (cluster: FaceCluster) => void;
@@ -44,6 +46,8 @@ export function TagRail(props: Props) {
         onDropOnTag,
         onDropNewTag,
         onDropNewPerson,
+        organizeMode,
+        onSetDestination,
         onForgetTag,
         onForgetPerson,
         onNameCluster,
@@ -131,6 +135,23 @@ export function TagRail(props: Props) {
                                     ×
                                 </button>
                             </div>
+                            {organizeMode === 'move' && (
+                                <button
+                                    type="button"
+                                    className={`tag-dest ${tag.destination ? '' : 'unset'}`}
+                                    onClick={() => onSetDestination(tag.name)}
+                                    disabled={busy}
+                                    title={
+                                        tag.destination
+                                            ? `Matches are filed in ${tag.destination}`
+                                            : 'Choose where matches are filed'
+                                    }
+                                >
+                                    {tag.destination
+                                        ? `→ ${tag.destination.split('/').pop()}`
+                                        : '→ choose folder…'}
+                                </button>
+                            )}
                             {active && (
                                 <div className="drop-hint">
                                     {negativeDrop ? `NOT “${tag.name}”` : `teach “${tag.name}”`}

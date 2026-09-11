@@ -15,8 +15,10 @@ database would orphan every embedding for that file. Both happen together here.
 
 from __future__ import annotations
 
+import errno
 import json
 import os
+import shutil
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -64,6 +66,56 @@ def plan_renames(
         if new_name != path.name:
             plans.append(RenamePlan(path, path.with_name(new_name)))
     return plans
+
+
+def plan_moves(
+    tagged: Iterable[tuple[Path, Sequence[str]]],
+    destinations: dict[str, str],
+    scores: dict[Path, dict[str, float]] | None = None,
+) -> tuple[list[RenamePlan], list[str]]:
+    """Work out where tagged files should be filed.
+
+    A file can match several tags but can only live in one folder, so when more
+    than one of its tags claims a destination the highest-scoring tag wins. Ties
+    fall back to alphabetical order so the result is deterministic rather than
+    dependent on dict ordering.
+
+    Returns the plans plus a note for every file whose destination was contested,
+    because silently picking one of several plausible folders is exactly the kind
+    of thing that makes an organizer untrustworthy.
+    """
+    plans: list[RenamePlan] = []
+    contested: list[str] = []
+
+    for path, tags in tagged:
+        path = Path(path)
+        claiming = sorted(t for t in tags if destinations.get(t))
+        if not claiming:
+            continue
+
+        if len(claiming) > 1:
+            per_tag = (scores or {}).get(path, {})
+            claiming.sort(key=lambda t: (-per_tag.get(t, 0.0), t))
+            contested.append(
+                f"{path.name}: matched {', '.join(sorted(tags))}; filed under {claiming[0]}"
+            )
+
+        target_dir = Path(destinations[claiming[0]]).expanduser()
+        if _already_filed(path, target_dir):
+            continue
+        plans.append(RenamePlan(path, target_dir / path.name))
+
+    return plans, contested
+
+
+def _already_filed(path: Path, target_dir: Path) -> bool:
+    """Whether the file is already in its destination folder."""
+    if not target_dir.exists():
+        return False
+    try:
+        return path.parent.resolve() == target_dir.resolve()
+    except OSError:
+        return False
 
 
 def _exists(path: Path) -> bool:
@@ -137,10 +189,20 @@ def apply_renames(
                 if not _exists(plan.source):
                     result.skipped += 1
                     continue
+                # A move's target directory may not exist yet.
+                if target.parent != plan.source.parent:
+                    target.parent.mkdir(parents=True, exist_ok=True)
                 # os.replace would overwrite; os.rename on a case-insensitive
                 # filesystem is the correct call for a case-only change, where
                 # source and target are "the same file".
-                os.rename(plan.source, target)
+                try:
+                    os.rename(plan.source, target)
+                except OSError as exc:
+                    # EXDEV: moving to a folder on another volume, which rename
+                    # cannot do. shutil falls back to copy-then-delete.
+                    if exc.errno != errno.EXDEV:
+                        raise
+                    shutil.move(str(plan.source), str(target))
             except OSError as exc:
                 result.errors.append(f"{plan.source}: {exc}")
                 result.skipped += 1

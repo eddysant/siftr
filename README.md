@@ -186,6 +186,35 @@ pays it once instead of on every click.
 - **Long jobs can be cancelled** from the progress bar; work already done is
   kept.
 
+### What happens to matching files
+
+The toolbar has three modes, and the choice is stored with the library:
+
+| Mode | Effect |
+|---|---|
+| `rename with [tag]` | Tags are written into filenames, in place |
+| `move to tag folder` | Matches are filed into each tag's folder |
+| `leave files alone` | Tags live only in siftr's index |
+
+In move mode each tag gets a destination folder (click `→ choose folder…` on the
+tag). A file matching several tags can only live in one place, so the
+highest-scoring tag wins and the contested files are listed in the result.
+
+Both modes journal to the same manifest, so `Undo` reverses either.
+
+### Live Photos and sidecars
+
+A photo on disk is often more than one file. A Live Photo is a still plus a
+motion clip paired *by stem*, and `.AAE`/`.XMP` sidecars carry edits for the file
+sharing their stem. siftr scores each file independently, so the two halves of a
+Live Photo routinely match different tags — renaming or moving them on their own
+would silently break the pairing.
+
+So siftr groups files by stem and gives every member of a group the tags of its
+**primary** (the still, where there is one). Both halves are renamed or moved
+together, and sidecars follow their photo. Companions that were never indexed —
+an `.AAE` is not something siftr embeds — still travel with the group.
+
 ### About the automatic renaming
 
 Every rename batch is journaled to `.siftr-renames.json` at the library root, so

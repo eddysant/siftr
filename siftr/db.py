@@ -23,7 +23,7 @@ import numpy as np
 
 from .vectors import from_blob, to_blob
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -69,6 +69,9 @@ CREATE TABLE IF NOT EXISTS concepts (
     threshold  REAL NOT NULL,
     n_examples INTEGER NOT NULL DEFAULT 0,
     prototype  BLOB NOT NULL,
+    -- Where files matching this tag go in "move" mode. NULL means this tag does
+    -- not claim its matches, so they stay where they are.
+    destination TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -295,6 +298,36 @@ class Database:
             FROM concepts c ORDER BY c.name
             """
         ).fetchall()
+
+    def set_destination(self, name: str, destination: str | None) -> bool:
+        """Where this tag's matches are filed in move mode. None = stay put."""
+        cur = self.conn.execute(
+            "UPDATE concepts SET destination = ? WHERE name = ?",
+            (str(Path(destination).expanduser()) if destination else None, name),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def destinations(self) -> dict[str, str]:
+        """Tag name -> destination folder, for tags that have one."""
+        return {
+            r["name"]: r["destination"]
+            for r in self.conn.execute(
+                "SELECT name, destination FROM concepts WHERE destination IS NOT NULL"
+            )
+        }
+
+    def get_setting(self, key: str, default: str = "") -> str:
+        row = self.conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else default
+
+    def set_setting(self, key: str, value: str) -> None:
+        self.conn.execute(
+            "INSERT INTO meta (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
+        self.conn.commit()
 
     def delete_concept(self, name: str) -> bool:
         cur = self.conn.execute("DELETE FROM concepts WHERE name = ?", (name,))

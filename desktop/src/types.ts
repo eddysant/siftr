@@ -27,7 +27,11 @@ export interface Tag {
     threshold: number;
     examples: number;
     matches: number;
+    /** Where matches are filed in move mode; null means they stay put. */
+    destination: string | null;
 }
+
+export type OrganizeMode = 'rename' | 'move' | 'off';
 
 export interface Job {
     id: string;

@@ -13,12 +13,13 @@ from pathlib import Path
 
 import numpy as np
 
+from .companions import find_companions, group_paths, tags_for_groups
 from .concepts import MIN_THRESHOLD, calibrate_threshold
 from .db import Database
 from .embed import Embedder
 from .jobs import Job
 from .naming import validate_tag
-from .rename import apply_renames, plan_renames, undo_last
+from .rename import apply_renames, plan_moves, plan_renames, undo_last
 from .vectors import centroid, cosine, from_blob
 
 
@@ -189,27 +190,100 @@ def score_library(db: Database, job: Job | None = None) -> dict[int, list[str]]:
     return db.effective_tags()
 
 
-def apply_tags_to_filenames(db: Database, root: Path | None = None, dry_run: bool = False) -> dict:
-    """Write each file's effective tags into its name on disk.
+ORGANIZE_MODES = ("rename", "move", "off")
 
-    Runs after scoring. Every batch is journaled so it can be undone, and the
-    index is updated in step so no embedding is orphaned.
+
+def _tagged_groups(
+    db: Database,
+) -> tuple[list, dict[Path, list[str]], dict[Path, dict[str, float]]]:
+    """Every indexed file grouped with its companions, with the group's tags.
+
+    Companion grouping is what stops a Live Photo's still and motion clip being
+    renamed or filed apart: the two halves match different tags on their own, so
+    every member takes the primary's tags.
     """
-    known = [row["name"] for row in db.list_concepts()]
     effective = db.effective_tags()
+    rows = db.library_view()
 
-    tagged: list[tuple[Path, list[str]]] = []
-    for row in db.library_view():
-        path = Path(row["path"])
-        tagged.append((path, effective.get(int(row["id"]), [])))
+    indexed = [Path(row["path"]) for row in rows]
+    tags_by_path = {Path(row["path"]): effective.get(int(row["id"]), []) for row in rows}
 
-    plans = plan_renames(tagged, known)
+    # Include companions that were never indexed — a .AAE sidecar or a Live
+    # Photo's .MOV may not be a file siftr embeds, but it must still travel.
+    everything: set[Path] = set(indexed)
+    for path in indexed:
+        everything.update(find_companions(path))
+
+    groups = group_paths(everything)
+    resolved = tags_for_groups(groups, tags_by_path)
+
+    scores: dict[Path, dict[str, float]] = {}
+    for name in (row["name"] for row in db.list_concepts()):
+        for hit in db.files_for_concept(name):
+            scores.setdefault(Path(hit["path"]), {})[name] = float(hit["score"])
+
+    return groups, resolved, scores
+
+
+def organize(
+    db: Database,
+    mode: str | None = None,
+    root: Path | None = None,
+    dry_run: bool = False,
+) -> dict:
+    """Apply the library's organize policy: rename in place, or file into folders.
+
+    ``rename`` writes each file's tags into its name. ``move`` files it into the
+    destination folder of its highest-scoring tag that has one. ``off`` leaves
+    the filesystem alone entirely.
+
+    Both modes act on companion groups rather than individual files, and both
+    journal to the same manifest, so one undo covers either.
+    """
+    mode = mode or db.get_setting("organize_mode", "rename")
+    if mode not in ORGANIZE_MODES:
+        raise ValueError(f"mode must be one of {ORGANIZE_MODES}, got {mode!r}")
+    if mode == "off":
+        return {"mode": mode, "changed": 0, "skipped": 0, "errors": [], "changes": []}
+
+    groups, resolved, scores = _tagged_groups(db)
+    tagged = [(path, tags) for path, tags in resolved.items()]
+    notes: list[str] = []
+
+    if mode == "rename":
+        known = [row["name"] for row in db.list_concepts()]
+        plans = plan_renames(tagged, known)
+    else:
+        destinations = db.destinations()
+        if not destinations:
+            return {
+                "mode": mode,
+                "changed": 0,
+                "skipped": 0,
+                "errors": ["no tag has a destination folder set"],
+                "changes": [],
+            }
+        plans, notes = plan_moves(tagged, destinations, scores)
+
     result = apply_renames(plans, db=db, root=root, dry_run=dry_run)
     return {
-        "renamed": result.count,
+        "mode": mode,
+        "changed": result.count,
         "skipped": result.skipped,
-        "errors": result.errors,
-        "changes": [[str(s), str(t)] for s, t in result.applied[:200]],
+        "errors": [*result.errors, *notes],
+        "paired": sum(1 for g in groups if g.is_paired),
+        "changes": [[str(a), str(b)] for a, b in result.applied[:200]],
+    }
+
+
+def apply_tags_to_filenames(db: Database, root: Path | None = None, dry_run: bool = False) -> dict:
+    """Rename-mode organize. Kept as a named entry point for the pending check."""
+    out = organize(db, mode="rename", root=root, dry_run=dry_run)
+    return {
+        "renamed": out["changed"],
+        "skipped": out["skipped"],
+        "errors": out["errors"],
+        "changes": out["changes"],
     }
 
 

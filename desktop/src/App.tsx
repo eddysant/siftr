@@ -4,7 +4,15 @@ import { Grid } from './components/Grid';
 import { NamePrompt } from './components/NamePrompt';
 import { TagRail } from './components/TagRail';
 import { filterFiles, tagCounts, toggleTag } from './filter';
-import type { FaceCluster, Job, MatchMode, MediaFile, Person, Tag } from './types';
+import type {
+    FaceCluster,
+    Job,
+    MatchMode,
+    MediaFile,
+    OrganizeMode,
+    Person,
+    Tag,
+} from './types';
 
 /** What the name prompt is currently collecting a name for. */
 type Pending =
@@ -30,6 +38,7 @@ export default function App() {
     const [chosen, setChosen] = useState<Set<string>>(new Set());
     const [job, setJob] = useState<Job | null>(null);
     const [pendingNames, setPendingNames] = useState(0);
+    const [organizeMode, setOrganizeMode] = useState<OrganizeMode>('rename');
     const [prompt, setPrompt] = useState<Pending>(null);
     const [status, setStatus] = useState('');
     const [error, setError] = useState<string | null>(null);
@@ -42,17 +51,19 @@ export default function App() {
 
     const refresh = useCallback(async () => {
         try {
-            const [library, tagList, peopleList, pending] = await Promise.all([
+            const [library, tagList, peopleList, pending, settings] = await Promise.all([
                 api.getLibrary(),
                 api.getTags(),
                 api.getPeople(),
                 api.pendingRenames(),
+                api.getSettings(),
             ]);
             setFiles(library.files);
             setRoots(library.roots);
             setTags(tagList.tags);
             setPeople(peopleList.people);
             setPendingNames(pending.pending);
+            setOrganizeMode(settings.organize_mode);
             // Clusters are only meaningful once faces exist, and the call is
             // cheap enough to fold into the same refresh.
             try {
@@ -170,6 +181,35 @@ export default function App() {
         }
     };
 
+    const changeMode = async (mode: OrganizeMode) => {
+        try {
+            await api.setOrganizeMode(mode);
+            setOrganizeMode(mode);
+            setStatus(
+                mode === 'rename'
+                    ? 'matches will be renamed with [tag] in place'
+                    : mode === 'move'
+                      ? 'matches will be filed into each tag’s folder'
+                      : 'files will be left alone',
+            );
+            await refresh();
+        } catch (err) {
+            setError(String(err));
+        }
+    };
+
+    const chooseDestination = async (tag: string) => {
+        const folder = await window.api.chooseFolder();
+        if (!folder) return;
+        try {
+            await api.setDestination(tag, folder);
+            setStatus(`“${tag}” files into ${folder}`);
+            await refresh();
+        } catch (err) {
+            setError(String(err));
+        }
+    };
+
     const undo = async () => {
         try {
             const result = await api.undoRenames();
@@ -210,8 +250,19 @@ export default function App() {
                 <button type="button" onClick={score} disabled={busy || !tags.length}>
                     Re-score
                 </button>
+                <label className="mode-select" title="What happens to files that match a tag">
+                    <select
+                        value={organizeMode}
+                        disabled={busy}
+                        onChange={(event) => changeMode(event.target.value as OrganizeMode)}
+                    >
+                        <option value="rename">rename with [tag]</option>
+                        <option value="move">move to tag folder</option>
+                        <option value="off">leave files alone</option>
+                    </select>
+                </label>
                 <button type="button" onClick={undo} disabled={busy || !roots.length}>
-                    Undo renames
+                    Undo
                 </button>
 
                 <input
@@ -273,7 +324,7 @@ export default function App() {
                 </div>
             )}
 
-            {!busy && pendingNames > 0 && (
+            {!busy && organizeMode === 'rename' && pendingNames > 0 && (
                 <div className="banner warn">
                     {pendingNames} filename{pendingNames === 1 ? '' : 's'} no longer match their
                     tags.
@@ -321,6 +372,8 @@ export default function App() {
                         if (selectedPerson === name) await selectPerson(null);
                         await refresh();
                     }}
+                    organizeMode={organizeMode}
+                    onSetDestination={chooseDestination}
                     onNameCluster={(cluster) => setPrompt({ kind: 'cluster', cluster })}
                 />
                 <Grid

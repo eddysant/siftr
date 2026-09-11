@@ -53,6 +53,37 @@ produced was noise. Nothing from that codebase survives except the general idea.
 - **Symlink is the default `--output` mode.** These are the user's originals; a
   tagger that reorganizes them by default eventually loses something.
 
+## Organize modes and companions
+
+`service.organize` applies the library's stored policy (`organize_mode` in
+`meta`): `rename` writes tags into filenames, `move` files matches into each
+tag's `destination`, `off` leaves the filesystem alone. Both write to the same
+rename manifest, so one undo covers either.
+
+- **Everything acts on companion groups, never lone files** (`companions.py`).
+  A Live Photo is a still plus a motion clip paired *by stem*; siftr scores each
+  independently, so the two halves match different tags and would be given
+  different names. Every member takes the **primary's** tags (the still wins over
+  the clip), which keeps the stems identical on both sides of a rename or move.
+  Using the primary's tags rather than the union is deliberate: the union would
+  put tags on the still that only the clip matched, and re-scoring one half would
+  then change the other's name.
+- **Grouping is by (directory, casefolded stem).** ExifTool's
+  `ContentIdentifier` would confirm a true pair, but grouping two unrelated
+  same-stem files is harmless — they simply keep matching stems — whereas failing
+  to group a real pair breaks it. Group by default.
+- **Companions that were never indexed still travel.** `find_companions` reads
+  the directory, so an `.AAE` siftr does not embed is still moved with its photo.
+- **A bucket of only sidecars is skipped** rather than having a primary invented
+  for it.
+- **Move mode: highest-scoring claiming tag wins**, ties broken alphabetically so
+  the result does not depend on dict ordering. Contested files are reported, not
+  silently filed.
+- **`shutil.move` on EXDEV**: a destination on another volume cannot be reached
+  by `os.rename`.
+- **`save_concept` must not clear `destination`** — re-teaching a tag replaces
+  its prototype, not where its matches are filed.
+
 ## Gotchas
 
 - **`PRAGMA foreign_keys = ON` is required** (`db.Database.__init__`). SQLite
@@ -131,7 +162,7 @@ renderer never holds it.
 
 ## Testing
 
-`pytest` — 227 tests, hermetic. It never downloads CLIP or InsightFace: a
+`pytest` — 267 tests, hermetic. It never downloads CLIP or InsightFace: a
 deterministic colour-based `FakeEmbedder` and a `StubAnalyzer` stand in
 (`tests/conftest.py`, `tests/test_faces.py`), because the logic worth testing
 (storage, thresholds, reductions, placement, arg parsing) is independent of which

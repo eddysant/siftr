@@ -98,6 +98,12 @@ try:
         name: str
         face_ids: list[int]
 
+    class SettingsBody(BaseModel):
+        organize_mode: str
+
+    class DestinationBody(BaseModel):
+        destination: str | None = None
+
     class OverrideBody(BaseModel):
         path: str
         tag: str
@@ -205,6 +211,7 @@ def create_app(db_path: Path | None = None, token: str | None = None):
                         "threshold": float(row["threshold"]),
                         "examples": int(row["n_examples"]),
                         "matches": int(row["n_matches"]),
+                        "destination": row["destination"],
                     }
                     for row in db.list_concepts()
                 ]
@@ -325,19 +332,31 @@ def create_app(db_path: Path | None = None, token: str | None = None):
         return job.as_dict()
 
     @app.post("/api/score", dependencies=guard)
-    def start_score(rename: bool = Query(default=True)) -> dict:
-        """Score the library and, by default, write tags into filenames."""
-        from .service import apply_tags_to_filenames, score_library
+    def start_score(organize_after: bool = Query(default=True, alias="rename")) -> dict:
+        """Score the library, then apply its organize policy.
+
+        The policy — rename in place, file into folders, or neither — is a stored
+        setting rather than a parameter, so the same choice applies however
+        scoring was triggered.
+        """
+        from .service import organize, score_library
 
         def work(job) -> dict:
             with open_db() as db:
                 score_library(db, job)
                 out: dict[str, Any] = {"scored": True}
-                if rename:
-                    job.message = "writing tags into filenames"
+                if organize_after:
+                    mode = db.get_setting("organize_mode", "rename")
+                    job.message = (
+                        "writing tags into filenames"
+                        if mode == "rename"
+                        else "filing into folders"
+                        if mode == "move"
+                        else "done"
+                    )
                     roots = app.state.allowlist.roots
-                    out["rename"] = apply_tags_to_filenames(
-                        db, root=Path(roots[0]) if roots else None
+                    out["organize"] = organize(
+                        db, mode=mode, root=Path(roots[0]) if roots else None
                     )
                 return out
 
@@ -446,6 +465,46 @@ def create_app(db_path: Path | None = None, token: str | None = None):
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
             return {"name": result.name, "references": result.n_references}
+
+    # --------------------------------------------------------------- settings
+
+    @app.get("/api/settings", dependencies=guard)
+    def settings() -> dict:
+        with open_db() as db:
+            return {"organize_mode": db.get_setting("organize_mode", "rename")}
+
+    @app.put("/api/settings", dependencies=guard)
+    def update_settings(body: SettingsBody) -> dict:
+        from .service import ORGANIZE_MODES
+
+        if body.organize_mode not in ORGANIZE_MODES:
+            raise HTTPException(
+                status_code=400, detail=f"organize_mode must be one of {ORGANIZE_MODES}"
+            )
+        with open_db() as db:
+            db.set_setting("organize_mode", body.organize_mode)
+            return {"organize_mode": body.organize_mode}
+
+    @app.put("/api/tags/{name}/destination", dependencies=guard)
+    def set_destination(name: str, body: DestinationBody) -> dict:
+        """Where this tag's matches are filed in move mode."""
+        if body.destination:
+            # The destination is written to, so it needs the same consent as any
+            # other folder siftr touches.
+            app.state.allowlist.assert_permits(Path(body.destination))
+        with open_db() as db:
+            if not db.set_destination(name, body.destination):
+                raise HTTPException(status_code=404, detail=f"no such tag: {name}")
+            return {"name": name, "destination": body.destination}
+
+    @app.post("/api/organize", dependencies=guard)
+    def organize_now(dry_run: bool = Query(default=False)) -> dict:
+        """Apply the organize policy without re-scoring."""
+        from .service import organize
+
+        with open_db() as db:
+            roots = app.state.allowlist.roots
+            return organize(db, root=Path(roots[0]) if roots else None, dry_run=dry_run)
 
     # -------------------------------------------------------------- filenames
 

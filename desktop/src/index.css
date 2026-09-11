@@ -355,6 +355,35 @@ button:focus-visible {
     border: 1px solid var(--line);
 }
 
+.tag-dest {
+    display: block;
+    width: calc(100% - 24px);
+    margin: 0 12px 8px;
+    padding: 2px 6px;
+    font-size: 10px;
+    text-align: left;
+    color: var(--ok);
+    border-color: color-mix(in srgb, var(--ok) 40%, var(--line));
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* A tag with no folder set does nothing in move mode, so it should read as
+   unfinished rather than as a normal control. */
+.tag-dest.unset {
+    color: var(--muted);
+    border-style: dashed;
+}
+
+.mode-select select {
+    font: inherit;
+    padding: 4px 6px;
+    background: var(--panel-2);
+    color: var(--ink);
+    border: 1px solid var(--line);
+}
+
 /* ------------------------------------------------------------------ toolbar */
 
 .selection {

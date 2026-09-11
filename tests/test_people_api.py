@@ -317,3 +317,76 @@ def test_counter_examples_for_an_unknown_tag_explain_themselves(client, tmp_path
 def test_empty_teach_with_no_negatives_is_still_rejected(client):
     response = client.post("/api/tags", json={"name": "x", "paths": []})
     assert response.status_code == 400
+
+
+# ------------------------------------------------------- organize mode / moves
+
+
+def test_organize_mode_defaults_to_rename(client):
+    assert client.get("/api/settings").json()["organize_mode"] == "rename"
+
+
+def test_organize_mode_round_trips(client):
+    assert client.put("/api/settings", json={"organize_mode": "move"}).status_code == 200
+    assert client.get("/api/settings").json()["organize_mode"] == "move"
+
+
+def test_invalid_organize_mode_is_rejected(client):
+    assert client.put("/api/settings", json={"organize_mode": "sideways"}).status_code == 400
+
+
+def test_destination_for_an_unknown_tag_is_404(client, tmp_path):
+    response = client.put("/api/tags/ghost/destination", json={"destination": str(tmp_path / "X")})
+    assert response.status_code == 404
+
+
+def test_destination_outside_the_allowlist_is_refused(client, tmp_path, make_images):
+    make_images(tmp_path / "ex", (10, 10, 10), count=3)
+    client.post(
+        "/api/tags",
+        json={"name": "t", "paths": [str(p) for p in (tmp_path / "ex").glob("*.png")]},
+    )
+    outside = tmp_path.parent / "somewhere-else"
+    response = client.put("/api/tags/t/destination", json={"destination": str(outside)})
+    assert response.status_code == 403
+
+
+def test_destination_appears_on_the_tag_listing(client, tmp_path, make_images):
+    make_images(tmp_path / "ex", (10, 200, 10), count=3)
+    client.post(
+        "/api/tags",
+        json={"name": "greens", "paths": [str(p) for p in (tmp_path / "ex").glob("*.png")]},
+    )
+    target = str(tmp_path / "Greens")
+    assert (
+        client.put("/api/tags/greens/destination", json={"destination": target}).status_code == 200
+    )
+    assert client.get("/api/tags").json()["tags"][0]["destination"] == target
+
+
+def test_clearing_a_destination_via_the_api(client, tmp_path, make_images):
+    make_images(tmp_path / "ex", (10, 200, 10), count=3)
+    client.post(
+        "/api/tags",
+        json={"name": "greens", "paths": [str(p) for p in (tmp_path / "ex").glob("*.png")]},
+    )
+    client.put("/api/tags/greens/destination", json={"destination": str(tmp_path / "G")})
+    client.put("/api/tags/greens/destination", json={"destination": None})
+    assert client.get("/api/tags").json()["tags"][0]["destination"] is None
+
+
+def test_organize_endpoint_dry_run_reports_without_acting(client, tmp_path, make_images):
+    from siftr.db import Database
+
+    make_images(tmp_path / "lib", (10, 10, 10), count=1)
+    target = tmp_path / "lib" / "img00.png"
+    with Database(tmp_path / "index.db") as direct:
+        concept_id = direct.save_concept("glaze", _face(1, dim=16), 0.5, 2)
+        file_id = direct.upsert_file(target, "image", 1, 1)
+        direct.commit()
+        direct.set_file_concepts(concept_id, [(file_id, 0.9)])
+
+    body = client.post("/api/organize", params={"dry_run": "true"}).json()
+    assert body["mode"] == "rename"
+    assert body["changed"] == 1
+    assert target.exists(), "dry run must not touch the filesystem"
