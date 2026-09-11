@@ -72,6 +72,12 @@ Index a library. This is the slow part; re-runs skip unchanged files.
 siftr index ~/Pictures
 ```
 
+Decoding, preprocessing and face detection run across your cores while the GPU
+handles the model, so a large library is bounded by roughly half an hour per
+50,000 photos rather than a couple of hours. `--workers N` overrides the default
+of one thread per core (capped at eight); `--no-faces` is markedly faster if you
+only care about tags.
+
 Teach a concept from a folder of examples:
 
 ```bash

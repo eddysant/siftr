@@ -66,6 +66,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--video-samples", type=int, default=8, help="frames to sample per video (default: 8)"
     )
     p_index.add_argument("--no-faces", action="store_true", help="skip face detection")
+    p_index.add_argument(
+        "--workers",
+        type=int,
+        default=None,
+        help="decode/preprocess threads (default: one per core, capped at 8)",
+    )
     p_index.add_argument("--force", action="store_true", help="re-embed even unchanged files")
     p_index.add_argument(
         "--prune", action="store_true", help="also drop index entries for deleted files"
@@ -217,6 +223,7 @@ def _cmd_index(args, db: Database, say) -> int:
         video_samples=args.video_samples,
         detect_faces=not args.no_faces,
         force=args.force,
+        workers=args.workers,
         progress=say,
     )
     say(f"\n{stats.summary()}")

@@ -114,6 +114,7 @@ try:
         video_samples: int = 8
         detect_faces: bool = True
         force: bool = False
+        workers: int | None = None
 
 except ImportError:  # pragma: no cover - the UI extra is optional
     TeachBody = OverrideBody = IndexBody = None  # type: ignore[assignment]
@@ -315,7 +316,9 @@ def create_app(db_path: Path | None = None, token: str | None = None):
                     video_samples=body.video_samples,
                     detect_faces=body.detect_faces,
                     force=body.force,
+                    workers=body.workers,
                     progress=progress,
+                    should_stop=lambda: job.cancelled,
                 )
                 return {
                     "indexed": stats.indexed,

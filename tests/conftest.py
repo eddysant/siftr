@@ -38,10 +38,25 @@ class FakeEmbedder:
             vector[i] = pixels[i % 3] * (1.0 + 0.01 * i)
         return normalize(vector)
 
+    def preprocess(self, image):
+        """Mirrors the real embedder's split.
+
+        The real one returns a model-ready tensor; the shape does not matter to
+        anything downstream, only that preprocess() output is what embed_tensors()
+        consumes. Returning the finished vector keeps the double honest about the
+        contract without pulling in torch.
+        """
+        return self._vector_for(image)
+
+    def embed_tensors(self, tensors):
+        if len(tensors) == 0:
+            return np.empty((0, 0), dtype=np.float32)
+        return normalize(np.vstack(list(tensors)))
+
     def embed_images(self, images):
         if not images:
             return np.empty((0, 0), dtype=np.float32)
-        return normalize(np.vstack([self._vector_for(img) for img in images]))
+        return self.embed_tensors([self.preprocess(img) for img in images])
 
     def embed_paths(self, paths):
         kept, vectors = [], []

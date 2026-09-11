@@ -19,7 +19,7 @@ produced was noise. Nothing from that codebase survives except the general idea.
 | `concepts.py` | prototype learning and threshold selection from example folders |
 | `faces.py` | InsightFace detection/ArcFace embeddings; person matching |
 | `media.py` | discovery, EXIF-correct loading, video frame sampling |
-| `index.py` | the indexing pass, `apply_concept`, `rematch_faces` |
+| `index.py` | the threaded indexing pipeline, `apply_concept`, `rematch_faces` |
 | `search.py` | ranking by concept / examples / text / person |
 | `organize.py` | symlink/copy/move results into folders |
 | `vectors.py` | normalize, blob (de)serialize, cosine, centroid |
@@ -52,6 +52,45 @@ produced was noise. Nothing from that codebase survives except the general idea.
   keeps the expensive detection work; `rematch` can then re-assign it.
 - **Symlink is the default `--output` mode.** These are the user's originals; a
   tagger that reorganizes them by default eventually loses something.
+
+## Indexing performance
+
+`build_index` runs decode, CLIP preprocessing and face detection on a thread
+pool, and the model forward pass on the calling thread in batches. The split
+follows the measurements, which were not what they looked like from the outside:
+
+| Stage | Serial | Parallel/batched | Gain |
+|---|---|---|---|
+| HEIC decode (12 MP) | 21.5/s | 4 threads | 2.5x |
+| CLIP preprocess | 20.0/s | 4 threads | 4.2x |
+| CLIP forward | 93.7/s | batch of 24 | 2.4x |
+| Face detect | 15.3/s | 4 threads | 3.6x |
+
+- **Preprocessing, not the model, is ~92% of the "embedding" cost.** Resize and
+  normalize on CPU dwarf the forward pass. That is why `Embedder` exposes
+  `preprocess` and `embed_tensors` separately: the expensive half threads, the
+  cheap half batches.
+- **Everything except the forward pass releases the GIL** — image codecs,
+  torchvision transforms, and ONNX Runtime — which is what makes threads worth
+  anything here. Measure before assuming otherwise.
+- **Measure MPS with `torch.mps.synchronize()`.** It is asynchronous; an
+  unsynchronized forward looked like 8364 img/s and was actually 223.
+- **Workers carry tensors, not images.** A preprocessed 224x224 tensor is
+  ~600 KB where the 12 MP photo is ~36 MB, which is what makes the in-flight
+  window (`pool_size * 4`) affordable.
+- **Only the calling thread touches SQLite.** Connections are not safe to share,
+  so `write()` is called from the consumer loop alone.
+- **Commits are every 50 files, not per file.** An fsync per photo dominates once
+  decoding is no longer the bottleneck, and a batch still bounds what an
+  interrupted scan loses.
+- **`FaceRecognitionUnavailable` must not cost a file its embeddings.** The
+  worker returns its tensors with `faces_unavailable` set; the consumer announces
+  once and stops asking for faces. An early version `continue`d instead and
+  silently dropped every in-flight file.
+
+Measured end to end on 60 x 12 MP HEIC with faces: 6.21/s single-threaded to
+25.55/s on eight workers — **4.1x**, or 2.24 hours down to 0.54 for a
+50,000-photo library.
 
 ## Organize modes and companions
 
