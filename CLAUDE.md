@@ -155,6 +155,43 @@ Kept rather than reverted because this is one attribute on one dataset, and an
 attribute centred on a person (a hat) may behave unlike one spread across them.
 Measure before turning it on.
 
+### A bigger or different embedding model does not help either
+
+Benchmarked on the same 26 photographs, averaging AUC over several choices of
+five training examples:
+
+| Model | dim | AUC |
+|---|---|---|
+| **ViT-B-32 laion2b** (current) | 512 | **0.944** |
+| ViT-B-16 laion2b | 512 | 0.937 |
+| ViT-L-14 laion2b | 768 | 0.927 |
+| ViT-B-16-SigLIP2-256 | 768 | 0.910 |
+| ViT-B-16-SigLIP-384 | 768 | 0.944 |
+| ViT-SO400M-14-SigLIP-384 | 1152 | 0.946 |
+
+Nothing beats the small fast model by more than noise, including one seven times
+its size. **Do not swap the embedding model hoping to improve attribute tagging.**
+
+### What does work: open-vocabulary detection, at a price
+
+OWLv2 (`google/owlv2-base-patch16-ensemble`) queried with "a tattooed arm"
+ranked the same set at **AUC 1.000** — every positive above every negative,
+positives averaging 0.392 against 0.161.
+
+It cannot replace CLIP as the index representation:
+
+- **99x slower**: 0.59 images/s against 58.9. A 50,000-photo library is 23 hours
+  against 14 minutes.
+- **Per query, not once.** Embeddings are computed once and answer any later
+  question; detection re-runs the whole library for every new query.
+- It takes a **text query**, not examples, so it does not fit teach-by-dropping.
+
+The shape that would work is two-stage: CLIP narrows the library to a few hundred
+candidates from the existing index, then OWLv2 verifies those. 200 candidates is
+about six minutes, which is tolerable for a deliberate query, and it buys
+near-perfect precision on the result. Not built — it adds `transformers` and a
+~600 MB model for an optional capability.
+
 ## Indexing performance
 
 `build_index` runs decode, CLIP preprocessing and face detection on a thread

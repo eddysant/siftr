@@ -173,3 +173,40 @@ def test_the_real_world_distribution_that_broke_calibration():
 
     assert with_examples > rest.max(), "reproduces the bug: nothing but the examples matches"
     assert without <= rest.max(), "excluded, the threshold admits real matches"
+
+
+def test_dimension_works_without_visual_output_dim():
+    """SigLIP's timm-backed tower has no `visual.output_dim`; reading it directly
+    made every SigLIP model unusable."""
+
+    from siftr.embed import Embedder
+
+    class Tower:
+        embed_dim = 768
+
+    class Model:
+        visual = Tower()
+
+    e = Embedder()
+    e._model = Model()
+    e._ensure_model = lambda: Model()
+    assert e.dimension == 768
+
+
+def test_dimension_falls_back_to_measuring():
+    """A tower advertising nothing at all still has to yield a width."""
+    import numpy as np
+
+    from siftr.embed import Embedder
+
+    class Bare:
+        pass
+
+    class Model:
+        visual = Bare()
+
+    e = Embedder()
+    e._model = Model()
+    e._ensure_model = lambda: Model()
+    e.embed_images = lambda images: np.zeros((1, 1152), dtype=np.float32)
+    assert e.dimension == 1152

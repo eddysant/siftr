@@ -80,8 +80,23 @@ class Embedder:
 
     @property
     def dimension(self) -> int:
+        """Width of this model's embeddings.
+
+        Read from the model where it advertises one, otherwise measured by
+        embedding a blank image. `visual.output_dim` is not universal — the
+        timm-backed towers (SigLIP, SigLIP2) have no such attribute, and reading
+        it directly made those models unusable.
+        """
         self._ensure_model()
-        return int(self._model.visual.output_dim)
+        visual = getattr(self._model, "visual", None)
+        for attr in ("output_dim", "embed_dim", "num_features"):
+            value = getattr(visual, attr, None)
+            if isinstance(value, int):
+                return value
+
+        from PIL import Image
+
+        return int(self.embed_images([Image.new("RGB", (64, 64))]).shape[1])
 
     # -------------------------------------------------------------- embedding
 
