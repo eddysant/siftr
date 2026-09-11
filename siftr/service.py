@@ -259,6 +259,52 @@ def verify_tag(
     ]
 
 
+def collect_duplicates(
+    db: Database,
+    destination: Path,
+    distance: float | None = None,
+    mode: str = "symlink",
+    dry_run: bool = False,
+) -> dict:
+    """Gather the redundant copies of every duplicate group into one folder.
+
+    The keeper of each group is deliberately left where it is — this collects
+    what you could remove, not what you want to keep, so the library stays intact
+    while you look at the pile.
+
+    Symlink by default. A duplicate finder that moves originals on a heuristic is
+    one you have to be certain about, and near-duplicate detection is a judgement
+    call the user should get to overrule.
+    """
+    from .duplicates import DEFAULT_DISTANCE, find_duplicates
+    from .organize import place
+
+    groups = find_duplicates(
+        db.duplicate_rows(), DEFAULT_DISTANCE if distance is None else distance
+    )
+    redundant = [path for group in groups for path in group.redundant()]
+    if not redundant:
+        return {"groups": 0, "collected": 0, "errors": []}
+
+    result = place(redundant, destination, mode=mode, dry_run=dry_run)
+
+    # Moving changes where those files live, so the index has to follow or every
+    # later lookup points somewhere they no longer are. Uses the placements the
+    # move actually made, not destination/name — collisions are resolved inside
+    # place() and the landing name is often not the original one.
+    if mode == "move" and not dry_run:
+        for source, landed in result.placements:
+            db.rename_file(source, landed)
+        db.commit()
+
+    return {
+        "groups": len(groups),
+        "collected": result.placed,
+        "skipped": result.skipped,
+        "errors": result.errors,
+    }
+
+
 def boundary_files(db: Database, name: str, limit: int = 12) -> list[dict]:
     """The files nearest a tag's decision boundary, closest first.
 

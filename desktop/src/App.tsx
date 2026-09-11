@@ -21,6 +21,7 @@ type Pending =
     | { kind: 'tag'; paths: string[] }
     | { kind: 'person'; paths: string[] }
     | { kind: 'cluster'; cluster: FaceCluster }
+    | { kind: 'verify'; tag: string }
     | null;
 
 export default function App() {
@@ -188,6 +189,7 @@ export default function App() {
         if (!current) return;
         if (current.kind === 'tag') await teach(name, current.paths);
         else if (current.kind === 'person') await registerPerson(name, current.paths);
+        else if (current.kind === 'verify') await runVerify(current.tag, name);
         else {
             try {
                 await api.nameCluster(name, current.cluster.face_ids);
@@ -250,6 +252,30 @@ export default function App() {
                     : `“${tag}” files into ${folder}`,
             );
             await refresh();
+        } catch (err) {
+            setError(String(err));
+        }
+    };
+
+    const runVerify = async (tag: string, phrase: string) => {
+        setError(null);
+        try {
+            const started = await api.verifyTag(tag, phrase);
+            const finished = await api.followJob(started.id, setJob);
+            setJob(finished);
+            if (finished.state === 'failed') {
+                setError(finished.error ?? 'verification failed');
+                return;
+            }
+            const rows = (finished.result as { results?: { name: string }[] })?.results ?? [];
+            // Verification ranks; it does not retag. Showing the order is the
+            // whole output, so the grid filters to it best-first.
+            setQuery('');
+            setStatus(
+                rows.length
+                    ? `verified ${rows.length} candidate(s) — best match: ${rows[0].name}`
+                    : 'nothing to verify',
+            );
         } catch (err) {
             setError(String(err));
         }
@@ -446,6 +472,7 @@ export default function App() {
                     organizeMode={organizeMode}
                     onSetDestination={chooseDestination}
                     onReviewTag={setReviewing}
+                    onVerifyTag={(tag) => setPrompt({ kind: 'verify', tag })}
                     onNameCluster={(cluster) => setPrompt({ kind: 'cluster', cluster })}
                 />
                 <Grid
@@ -464,7 +491,15 @@ export default function App() {
                 />
             </div>
 
-            {showDuplicates && <Duplicates onClose={() => setShowDuplicates(false)} />}
+            {showDuplicates && (
+                <Duplicates
+                    onClose={() => setShowDuplicates(false)}
+                    onCollected={(message) => {
+                        setStatus(message);
+                        void refresh();
+                    }}
+                />
+            )}
 
             {reviewing && (
                 <BoundaryReview
@@ -481,14 +516,24 @@ export default function App() {
                             ? 'Name this tag'
                             : prompt.kind === 'person'
                               ? 'Who is this?'
-                              : 'Name this person'
+                              : prompt.kind === 'verify'
+                                ? `What should “${prompt.tag}” look like?`
+                                : 'Name this person'
                     }
                     detail={
                         prompt.kind === 'cluster'
                             ? `${prompt.cluster.size} faces across ${prompt.cluster.files} file(s)`
-                            : `${prompt.paths.length} photo(s)`
+                            : prompt.kind === 'verify'
+                              ? 'Describe it in a few words, e.g. “a tattooed arm”. Slow but much more accurate.'
+                              : `${prompt.paths.length} photo(s)`
                     }
-                    confirmLabel={prompt.kind === 'tag' ? 'Teach' : 'Name'}
+                    confirmLabel={
+                        prompt.kind === 'tag'
+                            ? 'Teach'
+                            : prompt.kind === 'verify'
+                              ? 'Verify'
+                              : 'Name'
+                    }
                     onConfirm={confirmPrompt}
                     onCancel={() => setPrompt(null)}
                 />

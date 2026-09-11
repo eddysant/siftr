@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import shutil
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
@@ -21,11 +21,11 @@ Mode = Literal["symlink", "copy", "move"]
 class OrganizeResult:
     placed: int = 0
     skipped: int = 0
-    errors: list[str] | None = None
-
-    def __post_init__(self):
-        if self.errors is None:
-            self.errors = []
+    #: (source, where it actually landed). Collisions are resolved here, so the
+    #: destination is not simply `folder / source.name` and a caller that needs
+    #: to follow the files — to update an index, say — must be told.
+    placements: list[tuple[Path, Path]] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
 
 
 def place(
@@ -56,6 +56,7 @@ def place(
 
         if dry_run:
             result.placed += 1
+            result.placements.append((source, target))
             continue
 
         try:
@@ -68,6 +69,7 @@ def place(
             else:
                 raise ValueError(f"unknown mode: {mode}")
             result.placed += 1
+            result.placements.append((source, target))
         except OSError as exc:
             result.errors.append(f"{source}: {exc}")
             result.skipped += 1

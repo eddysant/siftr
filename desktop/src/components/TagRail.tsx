@@ -20,6 +20,7 @@ interface Props {
     organizeMode: OrganizeMode;
     onSetDestination: (tag: string, inverse: boolean) => void;
     onReviewTag: (tag: string) => void;
+    onVerifyTag: (tag: string) => void;
     onForgetTag: (name: string) => void;
     onForgetPerson: (name: string) => void;
     onNameCluster: (cluster: FaceCluster) => void;
@@ -50,6 +51,7 @@ export function TagRail(props: Props) {
         organizeMode,
         onSetDestination,
         onReviewTag,
+        onVerifyTag,
         onForgetTag,
         onForgetPerson,
         onNameCluster,
@@ -135,6 +137,15 @@ export function TagRail(props: Props) {
                                     title="Review the photos this tag is least sure about"
                                 >
                                     review
+                                </button>
+                                <button
+                                    type="button"
+                                    className="tag-review"
+                                    onClick={() => onVerifyTag(tag.name)}
+                                    disabled={busy}
+                                    title="Check the matches by looking for the thing itself (slow, precise)"
+                                >
+                                    verify
                                 </button>
                                 <button
                                     type="button"

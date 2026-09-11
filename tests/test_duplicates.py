@@ -6,6 +6,7 @@ to precisely the difference. Several of these assert that separation directly.
 """
 
 import shutil
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -436,3 +437,86 @@ def test_derived_name_rule_outranks_plain_name_length(tmp_path):
         {**row(derived), "size": 999, "mtime_ns": 1},
     ]
     assert _pick_keeper(rows).name == "sunset.jpeg"
+
+
+# ------------------------------------------------------------- collecting
+
+
+def _library_with_dupes(db, tmp_path):
+    """Two identical files plus an unrelated one, indexed."""
+
+    lib = tmp_path / "lib"
+    lib.mkdir(parents=True, exist_ok=True)
+    photo(1, size=(200, 150)).save(lib / "original.png")
+    shutil.copy(lib / "original.png", lib / "original copy.png")
+    photo(99, jitter=1, size=(200, 150)).save(lib / "other.png")
+    return lib
+
+
+def test_collecting_leaves_the_keeper_alone(db, tmp_path, embedder):
+    """This gathers what you *could* remove; the library stays intact."""
+    from siftr.index import build_index
+    from siftr.service import collect_duplicates
+
+    lib = _library_with_dupes(db, tmp_path)
+    build_index(db, lib, embedder, detect_faces=False)
+
+    result = collect_duplicates(db, tmp_path / "review")
+
+    assert result["collected"] == 1
+    assert (lib / "original.png").exists(), "the keeper is never collected"
+    assert (lib / "original copy.png").exists(), "symlinking leaves the original"
+    assert (tmp_path / "review" / "original copy.png").is_symlink()
+
+
+def test_collecting_nothing_is_not_an_error(db, tmp_path, make_images, embedder):
+    from siftr.index import build_index
+    from siftr.service import collect_duplicates
+
+    make_images(tmp_path / "lib", (200, 40, 40), count=1)
+    build_index(db, tmp_path / "lib", embedder, detect_faces=False)
+    assert collect_duplicates(db, tmp_path / "review")["collected"] == 0
+
+
+def test_collecting_by_move_keeps_the_index_pointing_at_the_files(db, tmp_path, embedder):
+    """Moving changes where files live; a stale index points nowhere."""
+    from siftr.index import build_index
+    from siftr.service import collect_duplicates
+
+    lib = _library_with_dupes(db, tmp_path)
+    build_index(db, lib, embedder, detect_faces=False)
+
+    collect_duplicates(db, tmp_path / "review", mode="move")
+
+    paths = [r["path"] for r in db.conn.execute("SELECT path FROM files")]
+    for path in paths:
+        assert Path(path).exists(), f"index points at a file that is not there: {path}"
+
+
+def test_collecting_dry_run_writes_nothing(db, tmp_path, embedder):
+    from siftr.index import build_index
+    from siftr.service import collect_duplicates
+
+    lib = _library_with_dupes(db, tmp_path)
+    build_index(db, lib, embedder, detect_faces=False)
+
+    result = collect_duplicates(db, tmp_path / "review", dry_run=True)
+
+    assert result["collected"] == 1
+    assert not (tmp_path / "review").exists()
+
+
+def test_a_looser_distance_collects_more(db, tmp_path, embedder):
+    from siftr.index import build_index
+    from siftr.service import collect_duplicates
+
+    lib = tmp_path / "lib"
+    lib.mkdir(parents=True)
+    base = photo(1, size=(800, 600))
+    base.save(lib / "a.png")
+    base.resize((400, 300)).save(lib / "a_small.png")
+    build_index(db, lib, embedder, detect_faces=False)
+
+    tight = collect_duplicates(db, tmp_path / "r1", distance=0.0, dry_run=True)
+    loose = collect_duplicates(db, tmp_path / "r2", distance=0.30, dry_run=True)
+    assert loose["collected"] > tight["collected"]

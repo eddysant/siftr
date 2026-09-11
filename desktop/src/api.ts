@@ -64,6 +64,24 @@ export const reviewBoundary = (tag: string, path: string, isMatch: boolean) =>
         { path, is_match: isMatch },
     );
 
+export const collectDuplicates = (
+    destination: string,
+    distance: number,
+    mode: 'symlink' | 'copy' | 'move',
+) =>
+    call<{ groups: number; collected: number; skipped: number; errors: string[] }>(
+        'POST',
+        '/api/duplicates/collect',
+        { destination, distance, mode },
+    );
+
+export const verifyTag = (tag: string, phrase: string, candidates = 200) =>
+    call<Job>(
+        'POST',
+        `/api/tags/${encodeURIComponent(tag)}/verify?phrase=${encodeURIComponent(phrase)}` +
+            `&candidates=${candidates}`,
+    );
+
 export const getPeople = () => call<{ people: Person[] }>('GET', '/api/people');
 
 export const addPerson = (name: string, paths: string[]) =>

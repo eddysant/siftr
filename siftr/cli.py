@@ -528,12 +528,12 @@ def _cmd_duplicates(args, db: Database, say) -> int:
     say(f"\n{len(groups)} group(s), {total} redundant file(s)")
 
     if args.output:
-        from .organize import place
+        from .service import collect_duplicates
 
-        result = place(redundant, args.output, mode=args.mode, dry_run=args.dry_run)
+        result = collect_duplicates(db, args.output, distance, args.mode, args.dry_run)
         verb = "would collect" if args.dry_run else "collected"
-        say(f"{verb} {result.placed} file(s) in {args.output} ({args.mode})")
-        for error in result.errors:
+        say(f"{verb} {result['collected']} file(s) in {args.output} ({args.mode})")
+        for error in result["errors"]:
             print(f"  ! {error}", file=sys.stderr)
     return 0
 

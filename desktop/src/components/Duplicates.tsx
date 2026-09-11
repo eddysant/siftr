@@ -4,6 +4,7 @@ import type { DuplicateGroup } from '../types';
 
 interface Props {
     onClose: () => void;
+    onCollected: (message: string) => void;
 }
 
 /**
@@ -14,11 +15,12 @@ interface Props {
  * because a duplicate finder that deletes is a duplicate finder you have to be
  * certain about, and near-duplicate detection is a heuristic.
  */
-export function Duplicates({ onClose }: Props) {
+export function Duplicates({ onClose, onCollected }: Props) {
     const [groups, setGroups] = useState<DuplicateGroup[]>([]);
     const [total, setTotal] = useState(0);
     const [distance, setDistance] = useState(0.12);
     const [loading, setLoading] = useState(true);
+    const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
     const load = async (value: number) => {
@@ -32,6 +34,27 @@ export function Duplicates({ onClose }: Props) {
             setError(String(err));
         } finally {
             setLoading(false);
+        }
+    };
+
+    const collect = async () => {
+        const folder = await window.api.chooseFolder();
+        if (!folder) return;
+        setBusy(true);
+        setError(null);
+        try {
+            // Symlinks: the originals stay put, so nothing is at risk while you
+            // decide. Near-duplicate detection is a judgement call.
+            const result = await api.collectDuplicates(folder, distance, 'symlink');
+            onCollected(
+                `linked ${result.collected} redundant file` +
+                    `${result.collected === 1 ? '' : 's'} into ${folder} — originals untouched`,
+            );
+            onClose();
+        } catch (err) {
+            setError(String(err));
+        } finally {
+            setBusy(false);
         }
     };
 
@@ -69,6 +92,14 @@ export function Duplicates({ onClose }: Props) {
                         />
                         <span className="muted">{(distance * 100).toFixed(0)}%</span>
                     </label>
+                    <button
+                        type="button"
+                        disabled={busy || loading || total === 0}
+                        onClick={collect}
+                        title="Gather the redundant copies into a folder as symlinks"
+                    >
+                        Collect redundant…
+                    </button>
                     <button type="button" onClick={onClose}>
                         Done
                     </button>
@@ -112,8 +143,9 @@ export function Duplicates({ onClose }: Props) {
                 ))}
 
                 <p className="muted dupes-foot">
-                    Nothing is deleted. Double-click a filename to reveal it in Finder, or use{' '}
-                    <code>siftr duplicates -o ~/review</code> to collect the redundant copies.
+                    Nothing is deleted. Click a filename to reveal it in Finder, or{' '}
+                    <strong>Collect redundant…</strong> to link every redundant copy into one
+                    folder so you can look through them before deciding.
                 </p>
             </div>
         </div>

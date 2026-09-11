@@ -98,6 +98,12 @@ try:
         name: str
         face_ids: list[int]
 
+    class CollectBody(BaseModel):
+        destination: str
+        distance: float | None = None
+        mode: str = "symlink"
+        dry_run: bool = False
+
     class ReviewBody(BaseModel):
         path: str
         is_match: bool
@@ -583,6 +589,24 @@ def create_app(db_path: Path | None = None, token: str | None = None):
         except RuntimeError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return job.as_dict()
+
+    @app.post("/api/duplicates/collect", dependencies=guard)
+    def collect(body: CollectBody) -> dict:
+        """Gather every group's redundant copies into one folder for review."""
+        from .service import collect_duplicates
+
+        if body.mode not in {"symlink", "copy", "move"}:
+            raise HTTPException(status_code=400, detail="mode must be symlink, copy or move")
+        # Writing into a folder needs the same consent as reading one.
+        app.state.allowlist.allow(Path(body.destination).expanduser())
+        with open_db() as db:
+            return collect_duplicates(
+                db,
+                Path(body.destination).expanduser(),
+                body.distance,
+                body.mode,
+                body.dry_run,
+            )
 
     @app.get("/api/duplicates", dependencies=guard)
     def duplicates(distance: float | None = Query(default=None)) -> dict:
