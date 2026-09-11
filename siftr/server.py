@@ -549,6 +549,34 @@ def create_app(db_path: Path | None = None, token: str | None = None):
             roots = app.state.allowlist.roots
             return organize(db, root=Path(roots[0]) if roots else None, dry_run=dry_run)
 
+    @app.post("/api/tags/{name}/verify", dependencies=guard)
+    def verify(
+        name: str,
+        phrase: str | None = Query(default=None),
+        candidates: int = Query(default=200),
+    ) -> dict:
+        """Second-pass verification. Slow by nature — runs as a job."""
+        from .grounding import GroundingUnavailable
+        from .service import verify_tag
+
+        def work(job) -> dict:
+            with open_db() as db:
+
+                def progress(message: str) -> None:
+                    job.message = message
+                    job.current += 1
+
+                try:
+                    return {"results": verify_tag(db, name, phrase, candidates, progress)}
+                except GroundingUnavailable as exc:
+                    raise RuntimeError(str(exc)) from exc
+
+        try:
+            job = app.state.jobs.submit("verify", work)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return job.as_dict()
+
     @app.get("/api/duplicates", dependencies=guard)
     def duplicates(distance: float | None = Query(default=None)) -> dict:
         """Duplicate and near-duplicate groups, largest first."""

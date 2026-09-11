@@ -157,6 +157,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_rematch.add_argument("--threshold", type=float, default=None)
 
+    p_verify = sub.add_parser(
+        "verify",
+        parents=[common],
+        help="re-rank a tag's matches with open-vocabulary detection (slow, precise)",
+    )
+    p_verify.add_argument("name")
+    p_verify.add_argument(
+        "--phrase",
+        default=None,
+        help="what to look for, e.g. 'a tattooed arm' (default: the tag's stored phrase)",
+    )
+    p_verify.add_argument(
+        "-n", "--candidates", type=int, default=200, help="how many CLIP matches to check"
+    )
+    p_verify.add_argument(
+        "--save-phrase", action="store_true", help="remember this phrase on the tag"
+    )
+
     p_dupes = sub.add_parser(
         "duplicates", parents=[common], help="find duplicate and near-duplicate files"
     )
@@ -218,6 +236,7 @@ def _dispatch(args, db: Database, say) -> int:
         "status": _cmd_status,
         "forget": _cmd_forget,
         "duplicates": _cmd_duplicates,
+        "verify": _cmd_verify,
         "rematch": _cmd_rematch,
         "serve": _cmd_serve,
     }
@@ -436,6 +455,29 @@ def _cmd_forget(args, db: Database, say) -> int:
         print(f"error: no such {args.kind}: {args.name}", file=sys.stderr)
         return 1
     say(f"forgot {args.kind} '{args.name}'")
+    return 0
+
+
+def _cmd_verify(args, db: Database, say) -> int:
+    from .grounding import GroundingUnavailable
+    from .service import verify_tag
+
+    if args.save_phrase and args.phrase:
+        db.set_verify_phrase(args.name, args.phrase)
+
+    try:
+        results = verify_tag(db, args.name, args.phrase, args.candidates, progress=say)
+    except GroundingUnavailable as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    if not results:
+        say("nothing to verify — teach and score a tag first")
+        return 0
+
+    print(f"\n{'verified':>8}  {'clip':>6}  file")
+    for row in results:
+        print(f"{row['verified']:>8.3f}  {row['clip']:>6.3f}  {row['path']}")
     return 0
 
 

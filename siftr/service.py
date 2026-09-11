@@ -211,6 +211,54 @@ def relearn(db: Database, name: str, embedder: Embedder) -> TeachResult:
     return teach_from_paths(db, name, positives, embedder, negatives=negatives)
 
 
+def verify_tag(
+    db: Database,
+    name: str,
+    phrase: str | None = None,
+    candidates: int = 200,
+    progress=None,
+) -> list[dict]:
+    """Re-rank a tag's best candidates with open-vocabulary detection.
+
+    Two stages by necessity. Detection is ~99x slower than embedding, so it
+    cannot run over a library; CLIP picks the plausible few hundred out of the
+    index that already exists and this checks only those. Bounded work for a
+    much sharper answer.
+
+    Returns every candidate with both scores, best-verified first — the CLIP
+    score is kept so a disagreement between the two is visible rather than
+    silently resolved.
+    """
+    from .grounding import verify_all
+    from .search import by_concept
+
+    row = db.get_concept(name)
+    if row is None:
+        raise KeyError(f"unknown concept: {name}")
+
+    query = phrase or row["verify_phrase"] or name.replace("-", " ")
+    # A generous candidate set, not just what already clears the threshold.
+    # Verification exists to settle the uncertain cases, and the files the tag
+    # already accepts are the least uncertain ones there are — passing the
+    # stored cutoff here would verify only what needed it least.
+    hits = by_concept(db, name, limit=candidates, threshold=0.0)
+    if not hits:
+        return []
+
+    clip_scores = {hit.path: hit.score for hit in hits}
+    verdicts = verify_all([h.path for h in hits], [query], progress=progress)
+    return [
+        {
+            "path": str(v.path),
+            "name": v.path.name,
+            "verified": v.score,
+            "clip": clip_scores.get(v.path, 0.0),
+            "box": list(v.box) if v.box else None,
+        }
+        for v in verdicts
+    ]
+
+
 def boundary_files(db: Database, name: str, limit: int = 12) -> list[dict]:
     """The files nearest a tag's decision boundary, closest first.
 

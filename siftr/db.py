@@ -18,12 +18,13 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Iterable, Iterator, Sequence
 from pathlib import Path
+from typing import ClassVar
 
 import numpy as np
 
 from .vectors import from_blob, to_blob
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -49,7 +50,6 @@ CREATE TABLE IF NOT EXISTS files (
     pixels       INTEGER,
     indexed_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
-CREATE INDEX IF NOT EXISTS idx_files_content_hash ON files(content_hash);
 
 -- One row per embedded view of a file: a single row for an image, or one row
 -- per sampled frame for a video (frame_time = seconds into the clip).
@@ -65,7 +65,6 @@ CREATE TABLE IF NOT EXISTS embeddings (
     box         TEXT,
     vector      BLOB NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_embeddings_file ON embeddings(file_id);
 
 -- Folders the user has opened for indexing. Persisted because the API's
 -- read allowlist is rebuilt from this at startup: a library indexed in an
@@ -85,6 +84,9 @@ CREATE TABLE IF NOT EXISTS concepts (
     -- Where files matching this tag go in "move" mode. NULL means this tag does
     -- not claim its matches, so they stay where they are.
     destination TEXT,
+    -- A phrase for open-vocabulary verification, e.g. "a tattooed arm". Needed
+    -- because OWLv2's image-guided mode does not discriminate; see grounding.py.
+    verify_phrase TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -94,7 +96,6 @@ CREATE TABLE IF NOT EXISTS file_concepts (
     score      REAL NOT NULL,
     PRIMARY KEY (file_id, concept_id)
 );
-CREATE INDEX IF NOT EXISTS idx_file_concepts_concept ON file_concepts(concept_id);
 
 -- Manual corrections layered over the model's decisions. 'on' forces a tag
 -- that scoring missed, 'off' suppresses one it got wrong. Kept separate from
@@ -106,7 +107,6 @@ CREATE TABLE IF NOT EXISTS concept_overrides (
     state      TEXT NOT NULL CHECK (state IN ('on', 'off')),
     PRIMARY KEY (file_id, concept_id)
 );
-CREATE INDEX IF NOT EXISTS idx_overrides_concept ON concept_overrides(concept_id);
 
 -- Files the user has explicitly rejected for a tag, kept as counter-examples.
 -- Distinct from a concept_override of 'off': that suppresses the tag on one
@@ -135,7 +135,6 @@ CREATE TABLE IF NOT EXISTS person_faces (
     vector    BLOB NOT NULL,
     source    TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_person_faces_person ON person_faces(person_id);
 
 -- Faces actually found in library files, with the person they were matched to
 -- (NULL = detected but unidentified).
@@ -147,7 +146,18 @@ CREATE TABLE IF NOT EXISTS file_faces (
     frame_time REAL NOT NULL DEFAULT 0.0,
     bbox       TEXT,
     vector     BLOB NOT NULL
-);
+);"""
+
+#: Indexes are created *after* the column migration, not with the tables.
+#: An index on a column added later (idx_files_content_hash) cannot be built
+#: against an older table that does not have it yet, and the failure aborts
+#: the whole schema script.
+_INDEXES = """
+CREATE INDEX IF NOT EXISTS idx_files_content_hash ON files(content_hash);
+CREATE INDEX IF NOT EXISTS idx_embeddings_file ON embeddings(file_id);
+CREATE INDEX IF NOT EXISTS idx_file_concepts_concept ON file_concepts(concept_id);
+CREATE INDEX IF NOT EXISTS idx_overrides_concept ON concept_overrides(concept_id);
+CREATE INDEX IF NOT EXISTS idx_person_faces_person ON person_faces(person_id);
 CREATE INDEX IF NOT EXISTS idx_file_faces_file ON file_faces(file_id);
 CREATE INDEX IF NOT EXISTS idx_file_faces_person ON file_faces(person_id);
 """
@@ -170,11 +180,51 @@ class Database:
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.execute("PRAGMA journal_mode = WAL")
         self.conn.executescript(_SCHEMA)
+        self._migrate()
+        self.conn.executescript(_INDEXES)
         self.conn.execute(
             "INSERT INTO meta (key, value) VALUES ('schema_version', ?) "
             "ON CONFLICT(key) DO NOTHING",
             (str(SCHEMA_VERSION),),
         )
+        self.conn.commit()
+
+    #: Columns added after a table first shipped. `CREATE TABLE IF NOT EXISTS`
+    #: does nothing to an existing table, so every one of these would simply be
+    #: absent from an index created by an earlier version — and the failure is a
+    #: bare "no such column" at the first query that touches it. Tests never see
+    #: this because they build fresh databases.
+    _ADDED_COLUMNS: ClassVar[dict[str, list[tuple[str, str]]]] = {
+        "files": [
+            ("samples", "INTEGER NOT NULL DEFAULT 1"),
+            ("content_hash", "BLOB"),
+            ("phash", "BLOB"),
+            ("pixels", "INTEGER"),
+        ],
+        "embeddings": [
+            ("region", "TEXT NOT NULL DEFAULT 'frame'"),
+            ("box", "TEXT"),
+        ],
+        "concepts": [
+            ("destination", "TEXT"),
+            ("verify_phrase", "TEXT"),
+        ],
+    }
+
+    def _migrate(self) -> None:
+        """Bring an older index up to the current shape.
+
+        Additive only: columns are appended with defaults, never dropped or
+        retyped, so an index written by a newer siftr stays readable by an older
+        one. Anything needing more would want a real migration chain.
+        """
+        for table, columns in self._ADDED_COLUMNS.items():
+            existing = {row["name"] for row in self.conn.execute(f"PRAGMA table_info({table})")}
+            if not existing:
+                continue  # the schema script just created it, already current
+            for name, spec in columns:
+                if name not in existing:
+                    self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {spec}")
         self.conn.commit()
 
     def __enter__(self) -> Database:
@@ -376,6 +426,13 @@ class Database:
         cur = self.conn.execute(
             "UPDATE concepts SET destination = ? WHERE name = ?",
             (str(Path(destination).expanduser()) if destination else None, name),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def set_verify_phrase(self, name: str, phrase: str | None) -> bool:
+        cur = self.conn.execute(
+            "UPDATE concepts SET verify_phrase = ? WHERE name = ?", (phrase or None, name)
         )
         self.conn.commit()
         return cur.rowcount > 0

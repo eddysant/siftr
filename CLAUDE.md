@@ -23,6 +23,7 @@ produced was noise. Nothing from that codebase survives except the general idea.
 | `search.py` | ranking by concept / examples / text / person |
 | `organize.py` | symlink/copy/move results into folders |
 | `regions.py` | person crops from face boxes — measured as unhelpful, off by default |
+| `grounding.py` | OWLv2 verification of CLIP candidates; optional `[grounding]` extra |
 | `vectors.py` | normalize, blob (de)serialize, cosine, centroid |
 
 ## Design decisions worth keeping
@@ -283,6 +284,18 @@ rename manifest, so one undo covers either.
 
 ## Gotchas
 
+- **Adding a column needs a migration; `CREATE TABLE IF NOT EXISTS` does not.**
+  It does nothing at all to a table that already exists, so every column added
+  after v1 — `samples`, `content_hash`, `phash`, `pixels`, `destination`,
+  `region`, `box`, `verify_phrase` — was simply absent from any index created by
+  an earlier version, failing with a bare "no such column" at the first query
+  that touched it. `Database._migrate` adds them with `ALTER TABLE`. Tests never
+  caught this because they all build fresh databases; `test_an_old_index_gains_
+  new_columns` builds a v1-shaped one on purpose.
+- **Indexes are created after the migration, not with the tables** (`_INDEXES`
+  is a separate script). An index on a column added later cannot be built
+  against an older table that lacks it, and the failure aborts the whole schema
+  script.
 - **`PRAGMA foreign_keys = ON` is required** (`db.Database.__init__`). SQLite
   defaults it off, which would make every `ON DELETE CASCADE` in the schema
   silently do nothing. `test_deleting_file_cascades_to_embeddings` guards it.

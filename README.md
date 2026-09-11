@@ -147,6 +147,29 @@ redundant.
 Nothing is deleted. `-o` collects the redundant copies into a folder as symlinks
 so you can look before acting.
 
+### When a tag is nearly right
+
+Click **review** on a tag to see the photos it is least sure about — the ones
+closest to its threshold, on both sides — and answer yes or no on each. A "no" is
+remembered as a counter-example and keeps applying to every future re-teach.
+
+This is the highest-leverage thing you can do to a tag: on a real test set, five
+counter-examples took recall from 5/8 to 7/8, where nearly doubling the positive
+examples did nothing at all.
+
+For a hard question, a second pass with open-vocabulary detection is more
+accurate than embeddings alone:
+
+```bash
+pip install "siftr[grounding] @ git+https://github.com/eddysant/siftr"
+siftr verify tattoo --phrase "a tattooed arm" --save-phrase
+```
+
+It re-ranks the top CLIP candidates by actually looking for the thing in each
+photo. Measured on a 26-photo set that lifted ranking from AUC 0.941 to 0.988.
+It is roughly 100x slower than embedding, which is why it runs over a few hundred
+candidates rather than your library.
+
 ### Everything else
 
 ```bash

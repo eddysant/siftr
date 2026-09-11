@@ -24,6 +24,10 @@ dependencies = [
 faces = ["insightface>=0.7.3", "onnxruntime>=1.17"]
 video = ["av>=12.0"]
 ui = ["fastapi>=0.110", "uvicorn>=0.27"]
+# Open-vocabulary verification (OWLv2). A ~600 MB model on top of transformers,
+# for a second pass over a few hundred candidates — worth it for a precise
+# question, not for indexing.
+grounding = ["transformers>=4.40"]
 dev = ["pytest>=8.0", "ruff>=0.4", "httpx>=0.27"]
 
 [project.scripts]
