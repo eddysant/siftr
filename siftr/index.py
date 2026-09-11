@@ -16,6 +16,7 @@ from .duplicates import content_hash, perceptual_hash
 from .embed import Embedder
 from .faces import FaceAnalyzer, FaceRecognitionUnavailable, bbox_to_text, match
 from .media import MediaFile, discover, frames
+from .regions import box_to_text, crop_people
 
 Progress = Callable[[str], None]
 
@@ -27,6 +28,7 @@ class IndexStats:
     skipped_unchanged: int = 0
     failed: int = 0
     frames_embedded: int = 0
+    regions_embedded: int = 0
     faces_found: int = 0
     faces_named: int = 0
     errors: list[str] = field(default_factory=list)
@@ -37,6 +39,8 @@ class IndexStats:
             f"{self.skipped_unchanged} unchanged",
             f"{self.frames_embedded} frames embedded",
         ]
+        if self.regions_embedded:
+            parts.append(f"{self.regions_embedded} person crops")
         if self.faces_found:
             parts.append(f"{self.faces_found} faces ({self.faces_named} named)")
         if self.failed:
@@ -57,6 +61,10 @@ class _Prepared:
     tensors: list
     frame_times: list[float]
     faces: list[dict]
+    #: Person-crop tensors, with the boxes and times they came from.
+    region_tensors: list = field(default_factory=list)
+    region_boxes: list[str] = field(default_factory=list)
+    region_times: list[float] = field(default_factory=list)
     content_hash: bytes | None = None
     phash: bytes | None = None
     pixels: int | None = None
@@ -72,6 +80,7 @@ def _prepare(
     embedder: Embedder,
     video_samples: int,
     analyzer: FaceAnalyzer | None,
+    crop_people_regions: bool = False,
 ) -> _Prepared:
     """Decode, preprocess and face-detect one file.
 
@@ -124,10 +133,14 @@ def _prepare(
         digest, fingerprint, pixels = None, None, None
 
     faces: list[dict] = []
+    region_tensors: list = []
+    region_boxes: list[str] = []
+    region_times: list[float] = []
     if analyzer is not None:
         try:
             for frame in extracted:
-                for face in analyzer.detect(frame.image, frame.time):
+                detected = analyzer.detect(frame.image, frame.time)
+                for face in detected:
                     faces.append(
                         {
                             "vector": face.vector,
@@ -135,6 +148,12 @@ def _prepare(
                             "frame_time": face.frame_time,
                         }
                     )
+                if crop_people_regions and detected:
+                    # One crop per person, embedded alongside the whole frame.
+                    for region in crop_people(frame.image, [f.bbox for f in detected], frame.time):
+                        region_tensors.append(embedder.preprocess(region.image))
+                        region_boxes.append(box_to_text(region.box))
+                        region_times.append(region.frame_time)
         except FaceRecognitionUnavailable:
             return _Prepared(
                 media=media,
@@ -164,6 +183,9 @@ def _prepare(
         tensors=tensors,
         frame_times=[f.time for f in extracted],
         faces=faces,
+        region_tensors=region_tensors,
+        region_boxes=region_boxes,
+        region_times=region_times,
         content_hash=digest,
         phash=fingerprint,
         pixels=pixels,
@@ -178,6 +200,7 @@ def build_index(
     video_samples: int = 8,
     detect_faces: bool = True,
     face_analyzer: FaceAnalyzer | None = None,
+    crop_people_regions: bool = False,
     force: bool = False,
     workers: int | None = None,
     progress: Progress | None = None,
@@ -248,6 +271,17 @@ def build_index(
         stats.indexed += 1
         stats.frames_embedded += len(prepared.tensors)
 
+        if prepared.region_tensors:
+            region_vectors = embedder.embed_tensors(prepared.region_tensors)
+            db.add_embeddings(
+                file_id,
+                region_vectors,
+                prepared.region_times,
+                region="person",
+                boxes=prepared.region_boxes,
+            )
+            stats.regions_embedded += len(prepared.region_tensors)
+
         if prepared.faces:
             named = 0
             for face in prepared.faces:
@@ -277,7 +311,16 @@ def build_index(
                     media = next(upcoming)
                 except StopIteration:
                     return
-                queued.append(pool.submit(_prepare, media, embedder, video_samples, analyzer))
+                queued.append(
+                    pool.submit(
+                        _prepare,
+                        media,
+                        embedder,
+                        video_samples,
+                        analyzer,
+                        crop_people_regions,
+                    )
+                )
 
         submit_more()
         while queued:

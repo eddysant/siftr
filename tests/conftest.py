@@ -96,10 +96,10 @@ def write_image(path, color, size=(64, 64)) -> None:
 def make_images():
     """Create a folder of solid-colour images and return the folder."""
 
-    def _make(folder, color, count=6, jitter=12):
+    def _make(folder, color, count=6, jitter=12, size=(64, 64)):
         for i in range(count):
             shifted = tuple(min(255, max(0, c + (i - count // 2) * jitter)) for c in color)
-            write_image(folder / f"img{i:02d}.png", shifted)
+            write_image(folder / f"img{i:02d}.png", shifted, size=size)
         return folder
 
     return _make

@@ -22,6 +22,7 @@ produced was noise. Nothing from that codebase survives except the general idea.
 | `index.py` | the threaded indexing pipeline, `apply_concept`, `rematch_faces` |
 | `search.py` | ranking by concept / examples / text / person |
 | `organize.py` | symlink/copy/move results into folders |
+| `regions.py` | person crops from face boxes — measured as unhelpful, off by default |
 | `vectors.py` | normalize, blob (de)serialize, cosine, centroid |
 
 ## Design decisions worth keeping
@@ -123,9 +124,36 @@ teaching "tattoo-sleeve" from five examples and scoring the rest:
   "bare untattooed arms" scores 0.802, *higher* than vs "heavily tattooed"
   (0.787) — shared vocabulary dominates. It says nothing about image behaviour.
 
-The obvious next step for attribute tagging is embedding **person crops** rather
-than whole frames: the face detector already gives boxes, and a sleeve that is 3%
-of a photo is 60% of a crop.
+### Person crops were tried and did not work
+
+The obvious fix for the above is to embed **person crops** rather than whole
+frames: a sleeve that is 3% of a photo is a large share of a crop. It is built
+(`regions.py`, `siftr index --person-crops`) and it is **off by default, because
+measurement says it is worse**.
+
+Ranking held-out positives above negatives on the same 26 photographs:
+
+| Representation | mean pos | mean neg | AUC |
+|---|---|---|---|
+| whole frame | 0.614 | 0.406 | **0.90** |
+| crop 3.2w x 4.5h | 0.623 | 0.477 | 0.82 |
+| crop 5.0w x 5.0h | 0.625 | 0.433 | 0.80 |
+| crop 6.5w x 6.0h | 0.585 | 0.416 | 0.80 |
+| crop 4.0w x 7.0h | 0.629 | 0.456 | 0.82 |
+| crop 8.0w x 8.0h | 0.585 | 0.407 | 0.80 |
+
+End-to-end recall was identical (5/8, and 7/8 with negatives) with crops on or
+off, because the prototype is still built from whole-frame examples. Building the
+prototype from crops too made it *worse*, not better.
+
+Two reasons, neither reachable by tuning the box. CLIP is trained on whole images
+paired with captions, so a tight crop is out of distribution. And per-file score
+is a max over that file's embeddings, so extra vectors raise the **negative**
+ceiling as much as the positive one — mean negative rose 0.406 -> 0.477.
+
+Kept rather than reverted because this is one attribute on one dataset, and an
+attribute centred on a person (a hat) may behave unlike one spread across them.
+Measure before turning it on.
 
 ## Indexing performance
 
@@ -288,7 +316,7 @@ renderer never holds it.
 
 ## Testing
 
-`pytest` — 267 tests, hermetic. It never downloads CLIP or InsightFace: a
+`pytest` — 339 tests, hermetic. It never downloads CLIP or InsightFace: a
 deterministic colour-based `FakeEmbedder` and a `StubAnalyzer` stand in
 (`tests/conftest.py`, `tests/test_faces.py`), because the logic worth testing
 (storage, thresholds, reductions, placement, arg parsing) is independent of which

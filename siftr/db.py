@@ -23,7 +23,7 @@ import numpy as np
 
 from .vectors import from_blob, to_blob
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -57,6 +57,12 @@ CREATE TABLE IF NOT EXISTS embeddings (
     id          INTEGER PRIMARY KEY,
     file_id     INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
     frame_time  REAL NOT NULL DEFAULT 0.0,
+    -- 'frame' for the whole image, 'person' for a crop around a detected face.
+    -- Scoring takes the best over all of a file's embeddings, so a person crop
+    -- lets an attribute that is a few percent of the frame match on its own
+    -- terms without any change to the search path.
+    region      TEXT NOT NULL DEFAULT 'frame',
+    box         TEXT,
     vector      BLOB NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_embeddings_file ON embeddings(file_id);
@@ -260,13 +266,23 @@ class Database:
     # ------------------------------------------------------------- embeddings
 
     def add_embeddings(
-        self, file_id: int, vectors: np.ndarray, frame_times: Iterable[float] | None = None
+        self,
+        file_id: int,
+        vectors: np.ndarray,
+        frame_times: Iterable[float] | None = None,
+        region: str = "frame",
+        boxes: Iterable[str | None] | None = None,
     ) -> None:
         stack = np.atleast_2d(vectors)
         times = list(frame_times) if frame_times is not None else [0.0] * len(stack)
+        box_list = list(boxes) if boxes is not None else [None] * len(stack)
         self.conn.executemany(
-            "INSERT INTO embeddings (file_id, frame_time, vector) VALUES (?, ?, ?)",
-            [(file_id, float(t), to_blob(v)) for v, t in zip(stack, times, strict=True)],
+            "INSERT INTO embeddings (file_id, frame_time, region, box, vector) "
+            "VALUES (?, ?, ?, ?, ?)",
+            [
+                (file_id, float(t), region, b, to_blob(v))
+                for v, t, b in zip(stack, times, box_list, strict=True)
+            ],
         )
 
     def iter_embeddings(self, batch: int = 4096) -> Iterator[tuple[list[sqlite3.Row], np.ndarray]]:
@@ -277,7 +293,8 @@ class Database:
         """
         cur = self.conn.execute(
             """
-            SELECT e.id, e.file_id, e.frame_time, e.vector, f.path, f.kind
+            SELECT e.id, e.file_id, e.frame_time, e.region, e.box, e.vector,
+                   f.path, f.kind
             FROM embeddings e JOIN files f ON f.id = e.file_id
             """
         )

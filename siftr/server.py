@@ -113,6 +113,7 @@ try:
         folder: str
         video_samples: int = 8
         detect_faces: bool = True
+        person_crops: bool = False
         force: bool = False
         workers: int | None = None
 
@@ -315,6 +316,7 @@ def create_app(db_path: Path | None = None, token: str | None = None):
                     embedder(),
                     video_samples=body.video_samples,
                     detect_faces=body.detect_faces,
+                    crop_people_regions=body.person_crops,
                     force=body.force,
                     workers=body.workers,
                     progress=progress,
@@ -322,6 +324,7 @@ def create_app(db_path: Path | None = None, token: str | None = None):
                 )
                 return {
                     "indexed": stats.indexed,
+                    "regions": stats.regions_embedded,
                     "unchanged": stats.skipped_unchanged,
                     "failed": stats.failed,
                     "faces": stats.faces_found,

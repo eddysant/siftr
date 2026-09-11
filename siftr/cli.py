@@ -67,6 +67,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_index.add_argument("--no-faces", action="store_true", help="skip face detection")
     p_index.add_argument(
+        "--person-crops",
+        action="store_true",
+        help="also embed a crop around each person (measured as worse than whole "
+        "frames for attribute tags; off by default)",
+    )
+    p_index.add_argument(
         "--workers",
         type=int,
         default=None,
@@ -243,6 +249,7 @@ def _cmd_index(args, db: Database, say) -> int:
         _embedder(args),
         video_samples=args.video_samples,
         detect_faces=not args.no_faces,
+        crop_people_regions=args.person_crops,
         force=args.force,
         workers=args.workers,
         progress=say,
