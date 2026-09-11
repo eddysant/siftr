@@ -271,11 +271,20 @@ the one message that says what to do.
    than once per tag (`service.score_library` stacks prototypes into one matmul).
    Beyond roughly a few hundred thousand vectors it wants an ANN index
    (hnswlib/faiss); the linear scan is fine below that and has no dependencies.
-2. **Face detection on real photographs is unverified here.** The models load and
-   run, and every code path is covered with stub embeddings, but synthetic
-   drawings are not detected by RetinaFace (it is trained on photos) and no real
-   face images were used. Verify with `siftr add-person "Name" ~/some/photos`.
+2. **Face recognition is verified on real photographs** (10 public-domain
+   portraits, since deleted). Detection fired on 10/10 at det_score 0.76-0.89;
+   registering one person from two references then re-matching found both of
+   their photos and none of the other six people. Separation was wide — lowest
+   true match 0.645, highest non-match 0.150 — so `DEFAULT_MATCH_THRESHOLD` at
+   0.38 sits in the middle of a 0.495 gap rather than near an edge. Clustering
+   recovered both same-person pairs with no chaining between identities.
+
+   Note that RetinaFace does **not** fire on synthetic or drawn faces; it is
+   trained on photographs. Test fixtures must use real images or stub the
+   analyzer, which is why the suite does the latter.
 3. **No Python in the packaged app** — see Packaging above for why.
 4. **Clustering is single-link**, which can chain two people together through an
-   ambiguous face. Fine for proposing groups a human confirms; a proper
+   ambiguous face. It did not chain on the real-photo check above, but that was
+   eight faces of eight people; a large library with relatives in it is a much
+   harder case. Fine for proposing groups a human confirms; a proper
    agglomerative pass with a merge criterion would be more robust.
