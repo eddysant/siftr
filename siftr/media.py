@@ -86,7 +86,12 @@ def discover(root: Path, recursive: bool = True) -> Iterator[MediaFile]:
     library would index thousands of internal thumbnail derivatives alongside
     the real masters.
     """
-    root = Path(root).expanduser()
+    # Resolved, not merely expanded. Indexing with a relative path would
+    # otherwise store relative paths, and an index is read from a different
+    # working directory than it was written from as a matter of course — the
+    # desktop app runs from /, so every thumbnail 403s and every stored path is
+    # wrong the moment you cd.
+    root = Path(root).expanduser().resolve()
     if root.is_file():
         kind = classify(root)
         if kind:

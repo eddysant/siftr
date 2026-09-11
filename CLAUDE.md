@@ -107,7 +107,8 @@ teaching "tattoo-sleeve" from five examples and scoring the rest:
 
 - **Counter-examples are worth far more than more examples** for a subtle
   attribute: five negatives took recall from 5/8 to 7/8, while nearly doubling
-  the positives did not help. This is the case ⌥-drop exists for.
+  the positives did not help. This is why the boundary review exists (below) —
+  the highest-leverage input was also the most awkward to supply.
 - **Precision is the easy half.** Zero false positives in every configuration.
   Recall is where these concepts lose.
 - **What it learns may not be what was asked.** The tag found tattoo *parlour*
@@ -154,6 +155,24 @@ ceiling as much as the positive one — mean negative rose 0.406 -> 0.477.
 Kept rather than reverted because this is one attribute on one dataset, and an
 attribute centred on a person (a hat) may behave unlike one spread across them.
 Measure before turning it on.
+
+### Boundary review
+
+`service.boundary_files` returns the files nearest a tag's threshold, and
+`review_boundary_file` records a yes/no about one and re-learns. The UI is the
+"review" link on each tag row.
+
+- **Only near-misses are shown.** A photo scoring nowhere near the threshold
+  teaches the tag nothing it did not already know, so candidates are ranked by
+  distance from the line, both sides of it.
+- **A rejection is stored in `concept_rejections`, not folded into the
+  prototype.** It has to survive a later re-teach from fresh examples, or a
+  correction would quietly evaporate the next time the user drops a photo.
+  `teach_from_paths` folds stored rejections into its negatives on every call.
+- **A rejection always removes the tag from that file** (via a `concept_override`
+  of 'off'). Its effect on the *threshold* is clamped by the usual rule — one
+  counter-example must not exclude real matches — so the cutoff may not move at
+  all. Both halves matter; only the first is guaranteed.
 
 ### A bigger or different embedding model does not help either
 

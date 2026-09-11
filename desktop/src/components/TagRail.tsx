@@ -19,6 +19,7 @@ interface Props {
     onDropNewPerson: (paths: string[]) => void;
     organizeMode: OrganizeMode;
     onSetDestination: (tag: string) => void;
+    onReviewTag: (tag: string) => void;
     onForgetTag: (name: string) => void;
     onForgetPerson: (name: string) => void;
     onNameCluster: (cluster: FaceCluster) => void;
@@ -48,6 +49,7 @@ export function TagRail(props: Props) {
         onDropNewPerson,
         organizeMode,
         onSetDestination,
+        onReviewTag,
         onForgetTag,
         onForgetPerson,
         onNameCluster,
@@ -125,6 +127,15 @@ export function TagRail(props: Props) {
                             <div className="tag-meta">
                                 <span title="Training examples">{tag.examples} ex</span>
                                 <span title="Match threshold">{tag.threshold.toFixed(2)}</span>
+                                <button
+                                    type="button"
+                                    className="tag-review"
+                                    onClick={() => onReviewTag(tag.name)}
+                                    disabled={busy}
+                                    title="Review the photos this tag is least sure about"
+                                >
+                                    review
+                                </button>
                                 <button
                                     type="button"
                                     className="tag-forget"

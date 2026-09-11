@@ -50,6 +50,19 @@ export function resolveServiceCommand(resourcesPath?: string): string {
         const bundled = path.join(resourcesPath, 'python', 'bin', 'siftr');
         if (existsSync(bundled)) return bundled;
     }
+
+    // An inherited PATH beats the fallback list. When the app is launched from a
+    // shell that PATH is the user's actual intent, and preferring a hardcoded
+    // /opt/homebrew over it silently runs a different install than the one they
+    // put first — which during development means the app runs a released build
+    // and ignores every local change.
+    for (const dir of (process.env.PATH ?? '').split(':')) {
+        if (!dir) continue;
+        const candidate = path.join(dir, 'siftr');
+        if (existsSync(candidate)) return candidate;
+    }
+
+    // Only then the fixed list, for a Finder launch whose PATH has none of these.
     for (const dir of EXTRA_PATHS) {
         const candidate = path.join(dir, 'siftr');
         if (existsSync(candidate)) return candidate;

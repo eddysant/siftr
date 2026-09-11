@@ -108,6 +108,14 @@ def teach_from_paths(
     """
     name = validate_tag(name)
 
+    # Anything the user has explicitly rejected for this tag is a counter-example
+    # for good, not just for the teach that recorded it. Folding them in here
+    # means a re-teach from fresh examples cannot quietly undo a correction.
+    existing = db.get_concept(name)
+    if existing is not None:
+        stored = [Path(p) for p in db.rejections(int(existing["id"]))]
+        negatives = list(dict.fromkeys([*negatives, *stored]))
+
     if not paths and negatives:
         # Counter-examples only: the user dropped "this is NOT that" onto an
         # existing tag. Saying what a tag excludes should not require restating
@@ -143,6 +151,113 @@ def example_paths_for(db: Database, name: str) -> list[str]:
     if row is None:
         return []
     return db.overrides_for_concept(int(row["id"]), "on")
+
+
+def review_boundary_file(
+    db: Database,
+    name: str,
+    path: Path,
+    is_match: bool,
+    embedder: Embedder,
+) -> TeachResult:
+    """Record a yes/no answer about one boundary file and re-learn the tag.
+
+    A "no" is stored as a rejection and folded into the negatives on every future
+    teach; a "yes" pins the tag on that file and makes it an example. Both survive
+    re-teaching, which is the point — the whole value of an answer is that it
+    keeps applying.
+    """
+    row = db.get_concept(name)
+    if row is None:
+        raise KeyError(f"unknown concept: {name}")
+    concept_id = int(row["id"])
+    path = Path(path)
+
+    if is_match:
+        db.clear_rejection(concept_id, path)
+        file_id = db.file_id_for_path(path)
+        if file_id is not None:
+            db.set_override(file_id, concept_id, "on")
+    else:
+        db.add_rejection(concept_id, path)
+        file_id = db.file_id_for_path(path)
+        if file_id is not None:
+            db.set_override(file_id, concept_id, "off")
+
+    return relearn(db, name, embedder)
+
+
+def relearn(db: Database, name: str, embedder: Embedder) -> TeachResult:
+    """Re-teach a tag from everything currently known about it.
+
+    Positives are the files pinned on; negatives are the rejections. Called after
+    a boundary review so one answer immediately moves the threshold.
+    """
+    row = db.get_concept(name)
+    if row is None:
+        raise KeyError(f"unknown concept: {name}")
+    concept_id = int(row["id"])
+
+    positives = [Path(p) for p in db.overrides_for_concept(concept_id, "on")]
+    negatives = [Path(p) for p in db.rejections(concept_id)]
+
+    if not positives:
+        # Nothing pinned: keep the prototype and move only the cutoff, the same
+        # path an Alt-drop of counter-examples takes.
+        if negatives:
+            return _retighten_with_negatives(db, name, negatives, embedder)
+        return TeachResult(name, int(row["n_examples"]), float(row["threshold"]), 0.0)
+
+    return teach_from_paths(db, name, positives, embedder, negatives=negatives)
+
+
+def boundary_files(db: Database, name: str, limit: int = 12) -> list[dict]:
+    """The files nearest a tag's decision boundary, closest first.
+
+    Counter-examples are the highest-leverage input a tag can get — measured on a
+    real attribute set, five of them took recall from 5/8 to 7/8 where nearly
+    doubling the positives did nothing. But they are only useful if they are
+    *near-misses*: a photo that scores nowhere near the threshold teaches it
+    nothing it did not already know.
+
+    So this returns the files the tag is least certain about, on both sides of
+    the line. Confirming or rejecting those is what moves a threshold.
+    """
+    row = db.get_concept(name)
+    if row is None:
+        raise KeyError(f"unknown concept: {name}")
+
+    prototype = from_blob(row["prototype"])
+    threshold = float(row["threshold"])
+
+    best: dict[int, float] = {}
+    meta: dict[int, tuple[str, str]] = {}
+    for rows, matrix in db.iter_embeddings():
+        if matrix.shape[1] != prototype.shape[0]:
+            return []
+        scores = cosine(prototype, matrix)
+        for r, score in zip(rows, scores, strict=True):
+            file_id = int(r["file_id"])
+            meta[file_id] = (r["path"], r["kind"])
+            value = float(score)
+            if value > best.get(file_id, float("-inf")):
+                best[file_id] = value
+
+    ranked = sorted(best.items(), key=lambda kv: abs(kv[1] - threshold))
+    out = []
+    for file_id, score in ranked[:limit]:
+        path, kind = meta[file_id]
+        out.append(
+            {
+                "path": path,
+                "name": Path(path).name,
+                "kind": kind,
+                "score": score,
+                "matching": score >= threshold,
+                "distance": abs(score - threshold),
+            }
+        )
+    return out
 
 
 def score_library(db: Database, job: Job | None = None) -> dict[int, list[str]]:

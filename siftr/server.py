@@ -98,6 +98,10 @@ try:
         name: str
         face_ids: list[int]
 
+    class ReviewBody(BaseModel):
+        path: str
+        is_match: bool
+
     class SettingsBody(BaseModel):
         organize_mode: str
 
@@ -240,6 +244,39 @@ def create_app(db_path: Path | None = None, token: str | None = None):
                 "examples": result.n_examples,
                 "threshold": result.threshold,
                 "cohesion": result.cohesion,
+            }
+
+    @app.get("/api/tags/{name}/boundary", dependencies=guard)
+    def boundary(name: str, limit: int = Query(default=12)) -> dict:
+        """Files the tag is least sure about — the ones worth confirming."""
+        from .service import boundary_files
+
+        with open_db() as db:
+            try:
+                files = boundary_files(db, name, limit)
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            concept = db.get_concept(name)
+            return {"tag": name, "threshold": float(concept["threshold"]), "files": files}
+
+    @app.post("/api/tags/{name}/review", dependencies=guard)
+    def review(name: str, body: ReviewBody) -> dict:
+        """Answer yes/no about one boundary file, then re-learn the tag."""
+        from .service import review_boundary_file
+
+        path = app.state.allowlist.assert_permits(Path(body.path))
+        with open_db() as db:
+            try:
+                result = review_boundary_file(db, name, path, body.is_match, embedder())
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            return {
+                "tag": result.name,
+                "threshold": result.threshold,
+                "examples": result.n_examples,
+                "rejections": len(db.rejections(int(db.get_concept(name)["id"]))),
             }
 
     @app.delete("/api/tags/{name}", dependencies=guard)

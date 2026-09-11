@@ -1,4 +1,5 @@
 import type {
+    BoundaryFile,
     FaceCluster,
     Job,
     MatchMode,
@@ -48,6 +49,19 @@ export const getJob = (id: string) => call<Job>('GET', `/api/jobs/${id}`);
 
 export const undoRenames = () =>
     call<{ restored: number; errors: string[] }>('POST', '/api/renames/undo');
+
+export const getBoundary = (tag: string, limit = 12) =>
+    call<{ tag: string; threshold: number; files: BoundaryFile[] }>(
+        'GET',
+        `/api/tags/${encodeURIComponent(tag)}/boundary?limit=${limit}`,
+    );
+
+export const reviewBoundary = (tag: string, path: string, isMatch: boolean) =>
+    call<{ tag: string; threshold: number; examples: number; rejections: number }>(
+        'POST',
+        `/api/tags/${encodeURIComponent(tag)}/review`,
+        { path, is_match: isMatch },
+    );
 
 export const getPeople = () => call<{ people: Person[] }>('GET', '/api/people');
 

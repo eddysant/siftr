@@ -23,7 +23,7 @@ import numpy as np
 
 from .vectors import from_blob, to_blob
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -107,6 +107,17 @@ CREATE TABLE IF NOT EXISTS concept_overrides (
     PRIMARY KEY (file_id, concept_id)
 );
 CREATE INDEX IF NOT EXISTS idx_overrides_concept ON concept_overrides(concept_id);
+
+-- Files the user has explicitly rejected for a tag, kept as counter-examples.
+-- Distinct from a concept_override of 'off': that suppresses the tag on one
+-- file, this feeds the threshold. A rejection is the most informative input a
+-- tag can get and must survive re-teaching, so it lives in its own table rather
+-- than being folded into the prototype and forgotten.
+CREATE TABLE IF NOT EXISTS concept_rejections (
+    concept_id INTEGER NOT NULL REFERENCES concepts(id) ON DELETE CASCADE,
+    path       TEXT NOT NULL,
+    PRIMARY KEY (concept_id, path)
+);
 
 CREATE TABLE IF NOT EXISTS people (
     id         INTEGER PRIMARY KEY,
@@ -336,6 +347,29 @@ class Database:
             FROM concepts c ORDER BY c.name
             """
         ).fetchall()
+
+    def add_rejection(self, concept_id: int, path) -> None:
+        self.conn.execute(
+            "INSERT INTO concept_rejections (concept_id, path) VALUES (?, ?) "
+            "ON CONFLICT(concept_id, path) DO NOTHING",
+            (concept_id, str(path)),
+        )
+        self.conn.commit()
+
+    def rejections(self, concept_id: int) -> list[str]:
+        return [
+            r["path"]
+            for r in self.conn.execute(
+                "SELECT path FROM concept_rejections WHERE concept_id = ?", (concept_id,)
+            )
+        ]
+
+    def clear_rejection(self, concept_id: int, path) -> None:
+        self.conn.execute(
+            "DELETE FROM concept_rejections WHERE concept_id = ? AND path = ?",
+            (concept_id, str(path)),
+        )
+        self.conn.commit()
 
     def set_destination(self, name: str, destination: str | None) -> bool:
         """Where this tag's matches are filed in move mode. None = stay put."""

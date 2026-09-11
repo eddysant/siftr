@@ -430,6 +430,111 @@ button:focus-visible {
     font-size: 11px;
 }
 
+.tag-review {
+    padding: 0 6px;
+    font-size: 10px;
+    background: none;
+    border: 0;
+    color: var(--muted);
+}
+
+.tag-review:hover:not(:disabled) {
+    color: var(--accent);
+}
+
+/* ------------------------------------------------------------------- review */
+
+.review {
+    width: min(900px, 92vw);
+    max-height: 86vh;
+    overflow-y: auto;
+    padding: 16px;
+    background: var(--panel);
+    border: 1px solid var(--accent);
+}
+
+.review header {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.review h3 {
+    margin: 0;
+    font-size: 13px;
+    color: var(--accent);
+}
+
+.review header button {
+    margin-left: auto;
+}
+
+.review-note {
+    margin: 0 0 10px;
+    color: var(--ok);
+    font-size: 11px;
+}
+
+.review-grid {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 10px;
+}
+
+.review-grid li {
+    border: 1px solid var(--line);
+    background: var(--bg);
+    display: flex;
+    flex-direction: column;
+}
+
+/* A photo already carrying the tag reads differently from one that is not:
+   answering "no" to the first is a correction, to the second a confirmation. */
+.review-grid li.is-match {
+    border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+}
+
+.review-grid img {
+    width: 100%;
+    height: 130px;
+    object-fit: cover;
+    display: block;
+}
+
+.review-score {
+    padding: 4px 6px;
+    font-size: 10px;
+    color: var(--muted);
+}
+
+.review-actions {
+    display: flex;
+    border-top: 1px solid var(--line);
+}
+
+.review-actions button {
+    flex: 1;
+    border: 0;
+    border-radius: 0;
+    padding: 5px;
+    font-size: 11px;
+    background: var(--panel-2);
+}
+
+.review-actions .yes:hover:not(:disabled) {
+    background: var(--ok);
+    color: var(--accent-ink);
+}
+
+.review-actions .no:hover:not(:disabled) {
+    background: var(--danger);
+    color: var(--ink);
+}
+
 /* -------------------------------------------------------------------- modal */
 
 .modal-backdrop {

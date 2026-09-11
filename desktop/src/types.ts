@@ -33,6 +33,16 @@ export interface Tag {
 
 export type OrganizeMode = 'rename' | 'move' | 'off';
 
+/** A file near a tag's decision boundary — the ones worth confirming. */
+export interface BoundaryFile {
+    path: string;
+    name: string;
+    kind: string;
+    score: number;
+    matching: boolean;
+    distance: number;
+}
+
 export interface Job {
     id: string;
     kind: string;

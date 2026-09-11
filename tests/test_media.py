@@ -81,3 +81,23 @@ def test_sample_times_single_sample_is_the_midpoint():
 
 def test_sample_times_handles_zero_duration():
     assert _sample_times(0.0, 8) == [0.0]
+
+
+def test_discover_returns_absolute_paths(tmp_path, make_images, monkeypatch):
+    """An index is read from a different working directory than it was written
+    from as a matter of course; relative paths make it unreadable."""
+    make_images(tmp_path / "lib", (10, 10, 10), count=2)
+    monkeypatch.chdir(tmp_path)
+
+    found = list(discover(Path("lib")))
+
+    assert len(found) == 2
+    for media in found:
+        assert media.path.is_absolute(), media.path
+
+
+def test_discover_resolves_a_relative_single_file(tmp_path, make_images, monkeypatch):
+    make_images(tmp_path / "lib", (10, 10, 10), count=1)
+    monkeypatch.chdir(tmp_path)
+    found = list(discover(Path("lib/img00.png")))
+    assert found and found[0].path.is_absolute()

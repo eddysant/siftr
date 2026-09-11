@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import * as api from './api';
 import { Grid } from './components/Grid';
 import { NamePrompt } from './components/NamePrompt';
+import { BoundaryReview } from './components/BoundaryReview';
 import { TagRail } from './components/TagRail';
 import { filterFiles, tagCounts, toggleTag } from './filter';
 import type {
@@ -40,6 +41,7 @@ export default function App() {
     const [pendingNames, setPendingNames] = useState(0);
     const [organizeMode, setOrganizeMode] = useState<OrganizeMode>('rename');
     const [prompt, setPrompt] = useState<Pending>(null);
+    const [reviewing, setReviewing] = useState<string | null>(null);
     const [status, setStatus] = useState('');
     const [error, setError] = useState<string | null>(null);
     // Kept separate from `error`: when the Python service never started, every
@@ -429,6 +431,7 @@ export default function App() {
                     }}
                     organizeMode={organizeMode}
                     onSetDestination={chooseDestination}
+                    onReviewTag={setReviewing}
                     onNameCluster={(cluster) => setPrompt({ kind: 'cluster', cluster })}
                 />
                 <Grid
@@ -446,6 +449,14 @@ export default function App() {
                     onReveal={(path) => window.api.revealInFinder(path)}
                 />
             </div>
+
+            {reviewing && (
+                <BoundaryReview
+                    tag={reviewing}
+                    onClose={() => setReviewing(null)}
+                    onChanged={() => void score()}
+                />
+            )}
 
             {prompt && (
                 <NamePrompt
