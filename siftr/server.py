@@ -509,6 +509,29 @@ def create_app(db_path: Path | None = None, token: str | None = None):
             roots = app.state.allowlist.roots
             return organize(db, root=Path(roots[0]) if roots else None, dry_run=dry_run)
 
+    @app.get("/api/duplicates", dependencies=guard)
+    def duplicates(distance: float | None = Query(default=None)) -> dict:
+        """Duplicate and near-duplicate groups, largest first."""
+        from .duplicates import DEFAULT_DISTANCE, find_duplicates
+
+        cutoff = DEFAULT_DISTANCE if distance is None else distance
+        with open_db() as db:
+            groups = find_duplicates(db.duplicate_rows(), cutoff)
+            return {
+                "distance": cutoff,
+                "groups": [
+                    {
+                        "kind": g.kind,
+                        "distance": g.distance,
+                        "keeper": str(g.keeper),
+                        "paths": [str(p) for p in g.paths],
+                        "redundant": [str(p) for p in g.redundant()],
+                    }
+                    for g in groups
+                ],
+                "redundant_total": sum(g.size - 1 for g in groups),
+            }
+
     # -------------------------------------------------------------- filenames
 
     @app.get("/api/renames/pending", dependencies=guard)

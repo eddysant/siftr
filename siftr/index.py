@@ -12,6 +12,7 @@ from pathlib import Path
 import numpy as np
 
 from .db import Database
+from .duplicates import content_hash, perceptual_hash
 from .embed import Embedder
 from .faces import FaceAnalyzer, FaceRecognitionUnavailable, bbox_to_text, match
 from .media import MediaFile, discover, frames
@@ -43,7 +44,7 @@ class IndexStats:
         return ", ".join(parts)
 
 
-@dataclass
+@dataclass(kw_only=True)
 class _Prepared:
     """One file, decoded and made ready for the model.
 
@@ -56,6 +57,9 @@ class _Prepared:
     tensors: list
     frame_times: list[float]
     faces: list[dict]
+    content_hash: bytes | None = None
+    phash: bytes | None = None
+    pixels: int | None = None
     error: str | None = None
     #: Set when the face extras are not installed. The file's embeddings are
     #: still valid and must still be stored — losing them because face support
@@ -82,15 +86,42 @@ def _prepare(
     try:
         extracted = frames(media.path, media.kind, samples=video_samples)
     except Exception as exc:
-        return _Prepared(media, [], [], [], f"{media.path}: {exc}")
+        return _Prepared(
+            media=media, tensors=[], frame_times=[], faces=[], error=f"{media.path}: {exc}"
+        )
 
     if not extracted:
-        return _Prepared(media, [], [], [], f"{media.path}: no decodable frames")
+        return _Prepared(
+            media=media,
+            tensors=[],
+            frame_times=[],
+            faces=[],
+            error=f"{media.path}: no decodable frames",
+        )
 
     try:
         tensors = [embedder.preprocess(f.image) for f in extracted]
     except Exception as exc:
-        return _Prepared(media, [], [], [], f"{media.path}: preprocessing failed: {exc}")
+        return _Prepared(
+            media=media,
+            tensors=[],
+            frame_times=[],
+            faces=[],
+            error=f"{media.path}: preprocessing failed: {exc}",
+        )
+
+    # Duplicate fingerprints, taken from the first frame — for a video that is a
+    # poster frame, which is what makes two encodes of the same clip comparable.
+    # Both are cheap next to the model work and ride along on the worker thread.
+    first = extracted[0].image
+    try:
+        digest = content_hash(media.path)
+        fingerprint = perceptual_hash(first)
+        pixels = first.size[0] * first.size[1]
+    except Exception:
+        # Losing a fingerprint costs duplicate detection for this file, nothing
+        # else; the embeddings are still perfectly good.
+        digest, fingerprint, pixels = None, None, None
 
     faces: list[dict] = []
     if analyzer is not None:
@@ -106,23 +137,37 @@ def _prepare(
                     )
         except FaceRecognitionUnavailable:
             return _Prepared(
-                media,
-                tensors,
-                [f.time for f in extracted],
-                [],
+                media=media,
+                tensors=tensors,
+                frame_times=[f.time for f in extracted],
+                faces=[],
+                content_hash=digest,
+                phash=fingerprint,
+                pixels=pixels,
                 faces_unavailable=True,
             )
         except Exception as exc:
             # A face failure must not cost the file its embeddings.
             return _Prepared(
-                media,
-                tensors,
-                [f.time for f in extracted],
-                [],
-                f"{media.path}: face detection failed: {exc}",
+                media=media,
+                tensors=tensors,
+                frame_times=[f.time for f in extracted],
+                faces=[],
+                content_hash=digest,
+                phash=fingerprint,
+                pixels=pixels,
+                error=f"{media.path}: face detection failed: {exc}",
             )
 
-    return _Prepared(media, tensors, [f.time for f in extracted], faces)
+    return _Prepared(
+        media=media,
+        tensors=tensors,
+        frame_times=[f.time for f in extracted],
+        faces=faces,
+        content_hash=digest,
+        phash=fingerprint,
+        pixels=pixels,
+    )
 
 
 def build_index(
@@ -190,7 +235,14 @@ def build_index(
         vectors = embedder.embed_tensors(prepared.tensors)
         media = prepared.media
         file_id = db.upsert_file(
-            media.path, media.kind, media.size, media.mtime_ns, len(prepared.tensors)
+            media.path,
+            media.kind,
+            media.size,
+            media.mtime_ns,
+            len(prepared.tensors),
+            content_hash=prepared.content_hash,
+            phash=prepared.phash,
+            pixels=prepared.pixels,
         )
         db.add_embeddings(file_id, vectors, prepared.frame_times)
         stats.indexed += 1

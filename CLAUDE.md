@@ -53,6 +53,38 @@ produced was noise. Nothing from that codebase survives except the general idea.
 - **Symlink is the default `--output` mode.** These are the user's originals; a
   tagger that reorganizes them by default eventually loses something.
 
+## Duplicate detection
+
+**CLIP is the wrong tool for this and was not used.** It is trained to be
+invariant to exactly what separates a duplicate from a similar photo. Measured on
+one photo plus resize/re-encode/brightness/crop variants against genuinely
+different shots of the same scene, CLIP's cosine separated the two classes by
+**0.003**. A perceptual hash separated them cleanly. They answer different
+questions — "same subject" versus "same photograph".
+
+- **Hash size is not free.** At 64 bits the same fixture gave *no* separation
+  (duplicates 0-2 bits differing, different photos 2-6). At 256 bits
+  (`DCT_SIZE=64`, `KEEP=16`) duplicates landed at 0.8-14.9% of bits and different
+  photos at 18.0-23.5%. `DEFAULT_DISTANCE = 0.12` sits in that gap, below the
+  hardest duplicate (a crop, 14.9%) — raising it toward 0.16 catches crops at
+  some cost in precision.
+- **Fixtures must have texture.** A DCT hash keys on high-frequency content; flat
+  synthetic gradients are pathological and make any threshold look broken. The
+  test fixtures add noise for this reason.
+- **Exact duplicates are found separately**, by BLAKE2b over the file bytes.
+  Someone may delete based on this, and a hash collision story is not worth
+  telling when certainty is free.
+- **The keeper heuristic is resolution, then bytes, then the name.** A compressed
+  12 MP frame beats a lossless 800px export of it. When copies are identical only
+  the name can decide, so names advertising themselves as copies ("copy", "(1)",
+  "-2") lose before modification time is consulted — mtime sounds authoritative
+  but some copy tools preserve it and others reset it.
+- **All-pairs Hamming, chunked.** ~47s over 50k x 256-bit hashes with
+  `np.bitwise_count`, peak temporary a few hundred MB. An LSH or BK-tree index is
+  what this wants an order of magnitude beyond that.
+- Hashes are computed on the indexing worker threads, where they are free next to
+  the model work, and stored on `files` (schema v6).
+
 ## Indexing performance
 
 `build_index` runs decode, CLIP preprocessing and face detection on a thread

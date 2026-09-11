@@ -130,6 +130,23 @@ your library, so you do not need to re-index after adding someone.
 siftr search --person "Nadia"
 ```
 
+### Finding duplicates
+
+```bash
+siftr duplicates                          # list groups
+siftr duplicates -o ~/review/dupes        # symlink the redundant copies for review
+siftr duplicates --distance 0.16          # looser, catches crops
+```
+
+Two kinds are reported: byte-identical files, and the same photograph after a
+resize, re-encode or edit — including across formats, so a HEIC and its JPEG
+export group together. Each group names the copy worth keeping (highest
+resolution, and never the one called "copy"); everything else is listed as
+redundant.
+
+Nothing is deleted. `-o` collects the redundant copies into a folder as symlinks
+so you can look before acting.
+
 ### Everything else
 
 ```bash

@@ -151,6 +151,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_rematch.add_argument("--threshold", type=float, default=None)
 
+    p_dupes = sub.add_parser(
+        "duplicates", parents=[common], help="find duplicate and near-duplicate files"
+    )
+    p_dupes.add_argument(
+        "--distance",
+        type=float,
+        default=None,
+        help="max fraction of differing bits (default: 0.12; raise to catch crops)",
+    )
+    p_dupes.add_argument(
+        "-o", "--output", type=Path, default=None, help="collect the redundant copies here"
+    )
+    p_dupes.add_argument(
+        "--mode",
+        choices=["symlink", "copy", "move"],
+        default="symlink",
+        help="how to collect them (default: symlink, which leaves originals alone)",
+    )
+    p_dupes.add_argument("--dry-run", action="store_true")
+
     p_serve = sub.add_parser(
         "serve", parents=[common], help="run the local API that backs the desktop UI"
     )
@@ -191,6 +211,7 @@ def _dispatch(args, db: Database, say) -> int:
         "people": _cmd_people,
         "status": _cmd_status,
         "forget": _cmd_forget,
+        "duplicates": _cmd_duplicates,
         "rematch": _cmd_rematch,
         "serve": _cmd_serve,
     }
@@ -408,6 +429,38 @@ def _cmd_forget(args, db: Database, say) -> int:
         print(f"error: no such {args.kind}: {args.name}", file=sys.stderr)
         return 1
     say(f"forgot {args.kind} '{args.name}'")
+    return 0
+
+
+def _cmd_duplicates(args, db: Database, say) -> int:
+    from .duplicates import DEFAULT_DISTANCE, find_duplicates
+
+    distance = DEFAULT_DISTANCE if args.distance is None else args.distance
+    groups = find_duplicates(db.duplicate_rows(), distance)
+    if not groups:
+        say("no duplicates found")
+        return 0
+
+    redundant = []
+    for group in groups:
+        label = "identical" if group.kind == "exact" else f"{group.distance * 100:.1f}% differ"
+        print(f"\n{group.size} files, {label}")
+        print(f"  keep  {group.keeper}")
+        for path in sorted(group.redundant()):
+            print(f"  drop  {path}")
+            redundant.append(path)
+
+    total = sum(g.size - 1 for g in groups)
+    say(f"\n{len(groups)} group(s), {total} redundant file(s)")
+
+    if args.output:
+        from .organize import place
+
+        result = place(redundant, args.output, mode=args.mode, dry_run=args.dry_run)
+        verb = "would collect" if args.dry_run else "collected"
+        say(f"{verb} {result.placed} file(s) in {args.output} ({args.mode})")
+        for error in result.errors:
+            print(f"  ! {error}", file=sys.stderr)
     return 0
 
 

@@ -23,7 +23,7 @@ import numpy as np
 
 from .vectors import from_blob, to_blob
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -41,8 +41,15 @@ CREATE TABLE IF NOT EXISTS files (
     -- re-index videos that were embedded at the old, lower rate; without this
     -- they looked "unchanged" and silently kept their coarser coverage.
     samples   INTEGER NOT NULL DEFAULT 1,
+    -- Duplicate detection. `content_hash` settles exact copies; `phash` is a
+    -- 256-bit DCT perceptual hash for near-duplicates. `pixels` decides which
+    -- copy of a group is worth keeping.
+    content_hash BLOB,
+    phash        BLOB,
+    pixels       INTEGER,
     indexed_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE INDEX IF NOT EXISTS idx_files_content_hash ON files(content_hash);
 
 -- One row per embedded view of a file: a single row for an image, or one row
 -- per sampled frame for a video (frame_time = seconds into the clip).
@@ -165,7 +172,17 @@ class Database:
 
     # ------------------------------------------------------------------ files
 
-    def upsert_file(self, path: Path, kind: str, size: int, mtime_ns: int, samples: int = 1) -> int:
+    def upsert_file(
+        self,
+        path: Path,
+        kind: str,
+        size: int,
+        mtime_ns: int,
+        samples: int = 1,
+        content_hash: bytes | None = None,
+        phash: bytes | None = None,
+        pixels: int | None = None,
+    ) -> int:
         """Record a file and return its id, replacing any prior embeddings.
 
         Re-indexing a changed file must not leave its old vectors behind, so the
@@ -173,17 +190,21 @@ class Database:
         """
         cur = self.conn.execute(
             """
-            INSERT INTO files (path, kind, size, mtime_ns, samples)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO files (path, kind, size, mtime_ns, samples,
+                               content_hash, phash, pixels)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(path) DO UPDATE SET
                 kind = excluded.kind,
                 size = excluded.size,
                 mtime_ns = excluded.mtime_ns,
                 samples = excluded.samples,
+                content_hash = excluded.content_hash,
+                phash = excluded.phash,
+                pixels = excluded.pixels,
                 indexed_at = datetime('now')
             RETURNING id
             """,
-            (str(path), kind, size, mtime_ns, samples),
+            (str(path), kind, size, mtime_ns, samples, content_hash, phash, pixels),
         )
         file_id = int(cur.fetchone()[0])
         self.conn.execute("DELETE FROM embeddings WHERE file_id = ?", (file_id,))
@@ -649,6 +670,23 @@ class Database:
 
     def list_roots(self) -> list[str]:
         return [r["path"] for r in self.conn.execute("SELECT path FROM roots ORDER BY added_at")]
+
+    def duplicate_rows(self) -> list[dict]:
+        """Everything duplicate detection needs, as plain dicts."""
+        return [
+            {
+                "path": r["path"],
+                "content_hash": r["content_hash"],
+                "phash": r["phash"],
+                "pixels": r["pixels"],
+                "size": r["size"],
+                "mtime_ns": r["mtime_ns"],
+                "kind": r["kind"],
+            }
+            for r in self.conn.execute(
+                "SELECT path, content_hash, phash, pixels, size, mtime_ns, kind FROM files"
+            )
+        ]
 
     def commit(self) -> None:
         self.conn.commit()
